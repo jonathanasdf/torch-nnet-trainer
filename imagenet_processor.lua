@@ -4,7 +4,7 @@ require 'paths'
 local M = {}
 
 local words = {}
-for line in io.lines'/home/jshen/data/ILSVRC2012_devkit_t12/words.txt' do
+for line in io.lines'/file/jshen/data/ILSVRC2012_devkit_t12/words.txt' do
   table.insert(words, string.sub(line,11))
 end
 
@@ -31,13 +31,13 @@ function M.preprocess(img)
 end
 
 function M.processOutputs(outputs, ...)
-  local names = (...)
+  local pathNames = (...)
   for i=1,outputs:size(1) do
     local val, classes = outputs[i]:view(-1):sort(true) 
     local name = ""
-    for j=1,names[i]:size(1) do
-      if names[i][j] ~= 0 then
-        name = name .. string.char(names[i][j])
+    for j=1,pathNames[i]:size(1) do
+      if pathNames[i][j] ~= 0 then
+        name = name .. string.char(pathNames[i][j])
       end
     end
     local result = 'predicted classes for ' .. paths.basename(name) .. ': '

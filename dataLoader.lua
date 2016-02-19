@@ -1,6 +1,8 @@
 require 'paths'
 require 'xlua'
 require 'image'
+require 'cutorch'
+require 'utils'
 local ffi = require 'ffi'
 local argcheck = require 'argcheck'
 local Threads = require 'threads'
@@ -42,7 +44,7 @@ function dataLoader:__init(...)
     findOptions = findOptions .. ' -o -iname "*.' .. extensionList[i] .. '"'
   end
 
-  -- find the image path names
+  -- find the image paths 
   print('Finding images...') 
   local imageList = os.tmpname()
   local tmpfile = os.tmpname()
@@ -97,25 +99,25 @@ function dataLoader:size(class, list)
   return self.numSamples
 end
 
-function dataLoader:tableToBatchTensor(table)
+function dataLoader:tableToTensor(table)
   for k, v in pairs(table) do
     table[k] = v:reshape(1, v:size(1), v:size(2), v:size(3))
   end
-  return torch.cat(table, 1)
+  return torch.cat(table, 1):cuda()
 end 
 
 -- samples with replacement
 function dataLoader:sample(quantity)
   quantity = quantity or 1
-  local names = {}
+  local paths = {}
   local data = {}
   for i=1,quantity do
     local index = math.ceil(torch.uniform() * self:size())
     path = self.imagePath[index]
-    table.insert(names, path) 
+    table.insert(paths, path) 
     table.insert(data, self:loadImage(path))
   end
-  return names, self:tableToBatchTensor(data)
+  return paths, self:tableToTensor(data)
 end
 
 function dataLoader:get(i1, i2)
@@ -137,18 +139,18 @@ function dataLoader:get(i1, i2)
   assert(quantity > 0)
 
   -- now that indices has been initialized, get the samples
-  local names = {}
+  local paths = {}
   local data = {}
   for i=1,quantity do
     -- load the sample
     path = self.imagePath[indices[i]]
-    table.insert(names, path) 
+    table.insert(paths, path) 
     table.insert(data, self:loadImage(path))
   end
-  return names, self:tableToBatchTensor(data)
+  return paths, self:tableToTensor(data)
 end
 
-function dataLoader:runAsync(batchSize, callback, nThreads)
+function dataLoader:runAsync(batchSize, epochSize, shuffle, nThreads, resultHandler)
   local jobDone = 0
   threads = Threads(
     nThreads,
@@ -160,24 +162,27 @@ function dataLoader:runAsync(batchSize, callback, nThreads)
     end
   )
 
-  local nBatches = math.ceil(self:size()/batchSize)
-  for i=1,nBatches do
-    local indexStart = (i-1) * batchSize + 1
-    local indexEnd = (indexStart + batchSize - 1)
+  for i=1,epochSize do
     threads:addjob(
       function()
-        if loader.verbose and jobDone % math.floor(nBatches/1000) == 0 then 
-          xlua.progress(jobDone, nBatches) 
+        if loader.verbose and jobDone % math.floor(epochSize/1000) == 0 then 
+          xlua.progress(jobDone, epochSize) 
         end
         jobDone = jobDone + 1
-        return i, loader:get(indexStart, indexEnd)
+        if shuffle then
+          return i, loader:sample(batchSize)
+        else
+          local indexStart = (i-1) * batchSize + 1
+          local indexEnd = (indexStart + batchSize - 1)
+          return i, loader:get(indexStart, indexEnd)
+        end
       end,
-      callback
+      resultHandler
     )
   end
 
   threads:synchronize()
   if self.verbose then 
-    xlua.progress(nBatches, nBatches) 
+    xlua.progress(epochSize, epochSize) 
   end
 end
