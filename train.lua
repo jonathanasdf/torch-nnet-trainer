@@ -33,18 +33,16 @@ function train(model, loader, opt, updates)
     model.model:training()
     cutorch.synchronize()
     local tm = torch.Timer()
-    for i=1,opt.epochSize do
-      loader:runAsync(batchSize, 
-                      epochSize, 
-                      true, --shuffle
-                      opt.nThreads, 
-                      bind(trainBatch, model.model, opt, updates)) 
-    end 
+    loader:runAsync(batchSize, 
+                    epochSize, 
+                    true, --shuffle
+                    opt.nThreads, 
+                    bind(trainBatch, model.model, opt, updates)) 
     cutorch.synchronize()
     print(string.format('Epoch [%d]: Total Time(s): %.2f', epoch, tm:time().real))
 
     collectgarbage()
-    if opt.output then
+    if opt.output and opt.output ~= "/dev/null" then
       saveDataParallel(opt.output .. ".tmp", model.model)
     end
   end

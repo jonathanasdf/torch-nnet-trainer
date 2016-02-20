@@ -1,5 +1,8 @@
+package.path = package.path .. ';/home/jshen/scripts/?.lua'
+
 require 'cutorch'
 require 'model'
+require 'dataLoader'
 
 local cmd = torch.CmdLine()
 cmd:argument('-model', 'model to load')
@@ -23,8 +26,7 @@ cutorch.setDevice(opt.gpu)
 
 local processor = dofile(opt.processor)
 
-paths.dofile('dataLoader.lua')
-local loader = dataLoader{
+local loader = DataLoader{
   path = opt.input,
   preprocessor = processor.preprocess,
   verbose = true

@@ -1,3 +1,5 @@
+package.path = package.path .. ';/home/jshen/scripts/?.lua'
+
 require 'paths'
 require 'xlua'
 require 'image'
@@ -30,9 +32,9 @@ local initcheck = argcheck{
    default = false},
 }
 
-local dataLoader = torch.class('dataLoader')
+local dataLoader = torch.class('DataLoader')
 
-function dataLoader:__init(...)
+function DataLoader:__init(...)
   local args = initcheck(...)
   for k,v in pairs(args) do self[k] = v end  
 
@@ -78,7 +80,6 @@ function dataLoader:__init(...)
       xlua.progress(count, length) 
     end 
   end
-  print()
 
   self.numSamples = self.imagePath:size(1)
   print(self.numSamples ..  ' samples found.')
@@ -86,18 +87,18 @@ function dataLoader:__init(...)
   os.execute('rm -f "' .. imageList .. '"')
 end
 
-function dataLoader:loadImage(path)
+function DataLoader:loadImage(path)
   local path = ffi.string(torch.data(path))
   local img = image.load(path, 3, 'float')
   if self.preprocessor then img = self.preprocessor(img) end 
   return img
 end
 
-function dataLoader:size(class, list)
+function DataLoader:size(class, list)
   return self.numSamples
 end
 
-function dataLoader:tableToTensor(table)
+function DataLoader:tableToTensor(table)
   for k, v in pairs(table) do
     table[k] = v:reshape(1, v:size(1), v:size(2), v:size(3))
   end
@@ -105,7 +106,7 @@ function dataLoader:tableToTensor(table)
 end 
 
 -- samples with replacement
-function dataLoader:sample(quantity)
+function DataLoader:sample(quantity)
   quantity = quantity or 1
   local paths = {}
   local data = {}
@@ -118,7 +119,7 @@ function dataLoader:sample(quantity)
   return paths, self:tableToTensor(data)
 end
 
-function dataLoader:get(i1, i2)
+function DataLoader:get(i1, i2)
   local indices, quantity
   if type(i1) == 'number' then
     if type(i2) == 'number' then -- range of indices
@@ -148,9 +149,12 @@ function dataLoader:get(i1, i2)
   return paths, self:tableToTensor(data)
 end
 
-function dataLoader:runAsync(batchSize, epochSize, shuffle, nThreads, resultHandler)
+function DataLoader:runAsync(batchSize, epochSize, shuffle, nThreads, resultHandler)
   threads = Threads(
     nThreads,
+    function()
+      package.path = package.path .. ';/home/jshen/scripts/?.lua'
+    end,
     function()
       require 'dataLoader'
     end,
@@ -182,5 +186,6 @@ function dataLoader:runAsync(batchSize, epochSize, shuffle, nThreads, resultHand
   end
 
   threads:synchronize()
-  print()
 end
+
+return dataLoader

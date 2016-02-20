@@ -1,8 +1,11 @@
+package.path = package.path .. ';/home/jshen/scripts/?.lua'
+
 require 'cutorch'
 require 'cudnn'
 require 'model'
 require 'paths'
 require 'optim'
+require 'dataLoader'
 require 'train'
 require 'utils'
 require 'SoftCrossEntropyCriterion'
@@ -35,8 +38,7 @@ assert(paths.filep(opt.student), "Cannot find student model " .. opt.student)
 
 local processor = dofile(opt.processor)
 
-paths.dofile('dataLoader.lua')
-local loader = dataLoader{
+local loader = DataLoader{
   path = opt.input,
   preprocessor = processor.preprocess,
   verbose = true
