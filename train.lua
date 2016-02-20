@@ -1,4 +1,4 @@
-local function trainBatch(model, opt, updates, batchNumber, paths, inputs)
+local function trainBatch(model, opt, updates, paths, inputs)
   local parameters, _ = model:getParameters()
   local optimState = {
     learningRate = opt.LR,
@@ -7,7 +7,7 @@ local function trainBatch(model, opt, updates, batchNumber, paths, inputs)
     dampening = 0.0,
     weightDecay = opt.weightDecay
   }
-  optim.sgd(updates(inputs), parameters, optimState)
+  optim.sgd(updates(model, inputs), parameters, optimState)
 
   if model.needsSync then
     model:syncParameters()
@@ -43,6 +43,7 @@ function train(model, loader, opt, updates)
     cutorch.synchronize()
     print(string.format('Epoch [%d]: Total Time(s): %.2f', epoch, tm:time().real))
 
+    collectgarbage()
     if opt.output then
       saveDataParallel(opt.output .. ".tmp", model.model)
     end

@@ -8,8 +8,9 @@ cmd:argument('-processor',
              'lua file that preprocesses input and handles output. '
              .. 'Functions that can be defined:\n'
              .. '    -preprocess(img): takes a single img and prepares it for the network\n'
-             .. '    -processOutputs(outputs): is called once with the outputs from each batchSize')
-cmd:option('-batchSize', -1, 'batch size')
+             .. '    -processOutputs(outputs): is called once with the outputs from each batchSize\n'
+             .. '    -printStats(): is called once at the very end')
+cmd:option('-batchSize', 16, 'batch size')
 cmd:option('-nThreads', 8, 'number of threads')
 cmd:option('-nGPU', 4, 'number of GPU to use')
 cmd:option('-gpu', 1, 'default GPU to use')
@@ -37,7 +38,7 @@ if batchSize == -1 then
   batchSize = loader:size()
 end 
 
-local function testBatch(batchNumber, paths, inputs)
+local function testBatch(paths, inputs)
   processor.processOutputs(model:forward(inputs, true), paths)
 end
 
@@ -46,3 +47,5 @@ loader:runAsync(batchSize,
                 false,                                -- don't shuffle,
                 opt.nThreads,
                 testBatch)                            -- resultHandler
+
+processor.printStats()

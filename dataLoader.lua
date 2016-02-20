@@ -73,14 +73,12 @@ function dataLoader:__init(...)
   for line in io.lines(imageList) do
     ffi.copy(s_data, line)
     s_data = s_data + maxPathLength
+    count = count + 1
     if self.verbose and count % 10000 == 0 then 
       xlua.progress(count, length) 
     end 
-    count = count + 1
   end
-  if self.verbose then 
-    xlua.progress(length, length) 
-  end
+  print()
 
   self.numSamples = self.imagePath:size(1)
   print(self.numSamples ..  ' samples found.')
@@ -151,7 +149,6 @@ function dataLoader:get(i1, i2)
 end
 
 function dataLoader:runAsync(batchSize, epochSize, shuffle, nThreads, resultHandler)
-  local jobDone = 0
   threads = Threads(
     nThreads,
     function()
@@ -162,27 +159,28 @@ function dataLoader:runAsync(batchSize, epochSize, shuffle, nThreads, resultHand
     end
   )
 
+  local jobDone = 0
   for i=1,epochSize do
     threads:addjob(
       function()
-        if loader.verbose and jobDone % math.floor(epochSize/1000) == 0 then 
-          xlua.progress(jobDone, epochSize) 
-        end
-        jobDone = jobDone + 1
         if shuffle then
-          return i, loader:sample(batchSize)
+          return loader:sample(batchSize)
         else
           local indexStart = (i-1) * batchSize + 1
           local indexEnd = (indexStart + batchSize - 1)
-          return i, loader:get(indexStart, indexEnd)
+          return loader:get(indexStart, indexEnd)
         end
       end,
-      resultHandler
+      function(paths, inputs)
+        jobDone = jobDone + 1
+        if self.verbose and epochSize > 1 then 
+          xlua.progress(jobDone, epochSize) 
+        end
+        resultHandler(paths, inputs)
+      end
     )
   end
 
   threads:synchronize()
-  if self.verbose then 
-    xlua.progress(epochSize, epochSize) 
-  end
+  print()
 end

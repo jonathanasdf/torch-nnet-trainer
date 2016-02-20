@@ -60,6 +60,7 @@ local function updates(teacher, student, inputs)
     if parameters ~= x then
       parameters:copy(x)
     end
+    grad_parameters:zero()
 
     teacher:forward(inputs, true)
     local logits = findModuleByName(teacher.model, 'fc8').output
@@ -68,12 +69,11 @@ local function updates(teacher, student, inputs)
     local err = criterion:forward(student_logits, logits)
     local grad_outputs = criterion:backward(student_logits, logits)
 
-    student:zeroGradParameters()
     student:backward(inputs, grad_outputs)
     return err, grad_parameters
   end
 end
 
-train(student, loader, opt, bind(updates, teacher, student))
+train(student, loader, opt, bind(updates, teacher))
 student.model:add(cudnn.SoftMax())
 saveDataParallel(opt.output, student.model)
