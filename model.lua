@@ -20,24 +20,36 @@ local initcheck = argcheck{
   pack=true,
   {name="backend",
   type="string",
-  help="Options: cudnn | ccn2 | cunn",
+  help="Options: cudnn | ccn2 | cunn | nn",
   default = "cudnn"},
   
+  {name="gpu",
+  type="string",
+  help="Comma-separated list of GPUs to use",
+  default = ""},
+
   {name="nGPU",
   type="number",
-  help="Number of GPUs to use",
-  default = 4},
-
-  {name="gpu",
-  type="number",
-  help="Default GPU to use",
-  default = 1}
+  help="Number of GPUs to use. Ignored if gpu is set above.",
+  default = 4}
 }
 
 function M:__init(...)
   -- argcheck
   local args = initcheck(...)
-  for k,v in pairs(args) do self[k] = v end  
+  self.backend = args.backend
+  self.gpu = args.gpu:split(',')
+  if tablelength(self.gpu) == 0 then
+    for i=1, args.nGPU do
+      table.insert(self.gpu, i)
+    end
+  end
+  self.nGPU = tablelength(self.gpu)
+
+  if self.nGPU == 0 and self.backend ~= 'nn' then
+    print('\27[31mWarning: Only the nn backend can be used with no GPUs. Switching backend to nn.\27[0m')
+    self.backend = 'nn'
+  end
 end
 
 
@@ -45,12 +57,12 @@ end
 function M:create(path)
   assert(paths.filep(path), 'File not found: ' .. path)
   print('Creating model from file: ' .. path)
-  nGPU = self.nGPU
+  gpu = self.gpu --make variable visible for dofile below
   self.model = paths.dofile(path)
   if self.backend == 'cudnn' then
     cudnn.convert(self.model, cudnn)
   elseif self.backend ~= 'nn' then
-    error'Unsupported backend'
+    error('Unsupported backend')
   end
   print('=> Model')
   print(self.model)
@@ -74,7 +86,10 @@ function M:forward(input, deterministic)
   else
     self.model:training()
   end
-  return self.model:forward(input:cuda())
+  if self.nGPU > 0 then
+    input = input:cuda()
+  end
+  return self.model:forward(input)
 end
 
 function M:getParameters()
@@ -91,19 +106,18 @@ end
 
 
 
-function makeDataParallel(model, nGPU)
-  device = cutorch.getDevice()
-  if nGPU > 1 then
+function makeDataParallel(model, gpu)
+  if tablelength(gpu) > 1 then
+    device = cutorch.getDevice()
     print('converting model to nn.DataParallelTable')
-    assert(nGPU <= cutorch.getDeviceCount(), 'number of GPUs less than nGPU specified')
     local model_single = model
     model = nn.DataParallelTable(1)
-    for i=1, nGPU do
-      cutorch.setDevice(i)
-      model:add(model_single:clone():cuda(), i)
+    for i,g in ipairs(gpu) do
+      cutorch.setDevice(g)
+      model:add(model_single:clone():cuda(), g)
     end
+    cutorch.setDevice(device)
   end
-  cutorch.setDevice(device)
   return model
 end
 
@@ -117,14 +131,17 @@ function M:loadDataParallel(filename)
   end
 
   if torch.type(model) == 'nn.DataParallelTable' then
-    return makeDataParallel(model:get(1):float(), self.nGPU)
+    return makeDataParallel(model:get(1):float(), self.gpu)
   elseif torch.type(model) == 'nn.Sequential' then
     for i,module in ipairs(model.modules) do
       if torch.type(module) == 'nn.DataParallelTable' then
-        model.modules[i] = makeDataParallel(module:get(1):float(), self.nGPU)
+        model.modules[i] = makeDataParallel(module:get(1):float(), self.gpu)
       end
     end
-    return model:cuda()
+    if self.nGPU > 0 then
+      model = model:cuda()
+    end
+    return model
   else
     error('The loaded model is not a Sequential or DataParallelTable module.')
   end
@@ -141,6 +158,7 @@ local function cleanDPT(module)
 end
 
 function saveDataParallel(filename, model)
+  model:clearState()
   collectgarbage()
   if torch.type(model) == 'nn.DataParallelTable' then
     torch.save(filename, cleanDPT(model))

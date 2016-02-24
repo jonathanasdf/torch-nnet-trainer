@@ -102,7 +102,7 @@ function DataLoader:tableToTensor(table)
   for k, v in pairs(table) do
     table[k] = v:reshape(1, v:size(1), v:size(2), v:size(3))
   end
-  return torch.cat(table, 1):cuda()
+  return torch.cat(table, 1)
 end 
 
 -- samples with replacement

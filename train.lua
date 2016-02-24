@@ -1,3 +1,11 @@
+function defineTrainingOptions(cmd)
+  cmd:option('-LR', 0.01, 'learning rate')
+  cmd:option('-momentum', 0.9, 'momentum')
+  cmd:option('-batchSize', 32, 'batch size')
+  cmd:option('-epochs', 50, 'num epochs')
+  cmd:option('-epochSize', -1, 'num batches per epochs')
+end
+
 local function trainBatch(model, opt, updates, paths, inputs)
   local parameters, _ = model:getParameters()
   local optimState = {
@@ -7,7 +15,12 @@ local function trainBatch(model, opt, updates, paths, inputs)
     dampening = 0.0,
     weightDecay = opt.weightDecay
   }
-  optim.sgd(updates(model, inputs), parameters, optimState)
+  if opt.nGPU > 0 then
+    inputs = inputs:cuda()
+  end
+  new_parameters, _ = optim.sgd(updates(model, inputs), parameters, optimState)
+  parameters, _ = model:getParameters()
+  parameters:copy(new_parameters)
 
   if model.needsSync then
     model:syncParameters()
@@ -35,7 +48,7 @@ function train(model, loader, opt, updates)
     local tm = torch.Timer()
     loader:runAsync(batchSize, 
                     epochSize, 
-                    true, --shuffle
+                    batchSize * epochSize < loader:size(), --shuffle
                     opt.nThreads, 
                     bind(trainBatch, model.model, opt, updates)) 
     cutorch.synchronize()
@@ -43,7 +56,7 @@ function train(model, loader, opt, updates)
 
     collectgarbage()
     if opt.output and opt.output ~= "/dev/null" then
-      saveDataParallel(opt.output .. ".tmp", model.model)
+      saveDataParallel(opt.output .. ".cached", model.model)
     end
   end
 end

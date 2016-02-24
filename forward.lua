@@ -4,6 +4,8 @@ require 'cutorch'
 require 'model'
 require 'dataLoader'
 
+torch.setdefaulttensortype('torch.FloatTensor')
+
 local cmd = torch.CmdLine()
 cmd:argument('-model', 'model to load')
 cmd:argument('-input', 'input file or folder')
@@ -13,16 +15,11 @@ cmd:argument('-processor',
              .. '    -preprocess(img): takes a single img and prepares it for the network\n'
              .. '    -processOutputs(outputs): is called once with the outputs from each batchSize\n'
              .. '    -printStats(): is called once at the very end')
+defineBaseOptions(cmd)     --defined in utils.lua
 cmd:option('-batchSize', 16, 'batch size')
-cmd:option('-nThreads', 8, 'number of threads')
-cmd:option('-nGPU', 4, 'number of GPU to use')
-cmd:option('-gpu', 1, 'default GPU to use')
 local opt = cmd:parse(arg or {})
 
 assert(paths.filep(opt.model), "Cannot find model " .. opt.model)
-
-torch.setdefaulttensortype('torch.FloatTensor')
-cutorch.setDevice(opt.gpu)
 
 local processor = dofile(opt.processor)
 
@@ -32,7 +29,7 @@ local loader = DataLoader{
   verbose = true
 }
 
-local model = Model{nGPU=opt.nGPU, gpu=opt.gpu}
+local model = Model{gpu=opt.gpu, nGPU=opt.nGPU}
 model:load(opt.model)
 
 local batchSize = opt.batchSize
