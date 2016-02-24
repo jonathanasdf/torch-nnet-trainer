@@ -59,11 +59,12 @@ local function updates(teacher, student, inputs)
   return function(x)
     grad_parameters:zero()
 
-    teacher:forward(inputs, true)
-    local logits = findModuleByName(teacher.model, 'fc8').output
+    local logits = teacher:forward(inputs, true)
     local student_logits = student:forward(inputs)
-    
     local err = criterion:forward(student_logits, logits)
+    if err > 1e4 then
+      print("Warning: large error " .. tostring(err))
+    end
     local grad_outputs = criterion:backward(student_logits, logits)
 
     student:backward(inputs, grad_outputs)

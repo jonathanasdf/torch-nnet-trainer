@@ -68,7 +68,7 @@ function M.processOutputs(outputs, ...)
       end
       result = result .. color .. "(" .. math.floor(prob[j]*100 + 0.5) .. "%) " .. words[classes[j]] .. "\27[0m; "
     end
-    result = result .. "ground truth: " .. words[ground_truth]
+    result = result .. "\27[36mground truth: " .. words[ground_truth] .. "\27[0m"
     print(result)
     
     total = total + 1
