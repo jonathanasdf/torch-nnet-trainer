@@ -40,12 +40,11 @@ function SoftCrossEntropyCriterion:updateGradInput(input, target)
   input = input:squeeze() / self.temperature
   target = type(target) == 'number' and target or target:squeeze() / self.temperature
   local y = sm(target)
-  
   self.gradInput:resizeAs(input)
   if input:dim() == 1 then
     self.gradInput = (sm(input) * y:sum() - y) / self.temperature
   elseif input:dim() == 2 then
-    self.gradInput = (torch.cmul(sm(input), y:sum(2):expandAs(input)) - y) / self.temperature
+    self.gradInput = (torch.cmul(sm(input), y:sum(2):expandAs(input)) - y) / self.temperature / input:size(1)
   else
     error('matrix or vector expected')
   end
