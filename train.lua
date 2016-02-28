@@ -56,7 +56,7 @@ function train(model, loader, opt, updates)
 
     collectgarbage()
     if opt.output and opt.output ~= "/dev/null" then
-      saveDataParallel(opt.output .. ".cached", model.model)
+      model:saveDataParallel(opt.output .. ".cached")
     end
   end
 end

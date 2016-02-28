@@ -45,6 +45,7 @@ function M:__init(...)
     end
   end
   self.nGPU = tablelength(self.gpu)
+  cutorch.setDevice(self.gpu[1])
 
   if self.nGPU == 0 and self.backend ~= 'nn' then
     print('\27[31mWarning: Only the nn backend can be used with no GPUs. Switching backend to nn.\27[0m')
@@ -108,7 +109,7 @@ end
 
 function makeDataParallel(model, gpu)
   if tablelength(gpu) > 1 then
-    device = cutorch.getDevice()
+    local device = cutorch.getDevice()
     print('converting model to nn.DataParallelTable')
     local model_single = model
     model = nn.DataParallelTable(1)
@@ -147,26 +148,26 @@ function M:loadDataParallel(filename)
   end
 end
 
-local function cleanDPT(module)
+local function cleanDPT(module, gpu)
   -- This assumes this DPT was created by the function above: all the
   -- module.modules are clones of the same network on different GPUs
   -- hence we only need to keep one when saving the model to the disk.
+  cutorch.setDevice(gpu)
   local newDPT = nn.DataParallelTable(1)
-  cutorch.setDevice(module.gpu)
-  newDPT:add(module:get(1), module.gpu)
+  newDPT:add(module:get(1), gpu)
   return newDPT
 end
 
-function saveDataParallel(filename, model)
-  model:clearState()
+function M:saveDataParallel(filename)
+  self.model:clearState()
   collectgarbage()
-  if torch.type(model) == 'nn.DataParallelTable' then
-    torch.save(filename, cleanDPT(model))
-  elseif torch.type(model) == 'nn.Sequential' then
+  if torch.type(self.model) == 'nn.DataParallelTable' then
+    torch.save(filename, cleanDPT(self.model, self.gpu[1]))
+  elseif torch.type(self.model) == 'nn.Sequential' then
     local temp_model = nn.Sequential()
-    for i, module in ipairs(model.modules) do
+    for i, module in ipairs(self.model.modules) do
       if torch.type(module) == 'nn.DataParallelTable' then
-        temp_model:add(cleanDPT(module))
+        temp_model:add(cleanDPT(module, self.gpu[1]))
       else
         temp_model:add(module)
       end

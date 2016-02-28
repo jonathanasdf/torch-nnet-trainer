@@ -39,7 +39,10 @@ local loader = DataLoader{
 
 local teacher = Model{gpu=opt.gpu, nGPU=opt.nGPU}
 teacher:load(opt.teacher)
-teacher.model:remove()
+if #teacher.model:findModules('cudnn.SoftMax') ~= 0 or 
+   #teacher.model:findModules('nn.SoftMax') ~= 0 then
+  teacher.model:remove()
+end
 
 local student = Model{gpu=opt.gpu, nGPU=opt.nGPU}
 student:load(opt.student)
@@ -78,4 +81,4 @@ if student.model.backend == 'cudnn' then
 else
   student.model:add(nn.SoftMax())
 end
-saveDataParallel(opt.output, student.model)
+student:saveDataParallel(opt.output)
