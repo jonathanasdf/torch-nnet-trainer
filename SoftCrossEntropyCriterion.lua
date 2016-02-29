@@ -27,7 +27,7 @@ function SoftCrossEntropyCriterion:updateOutput(input, target)
     local losses = -torch.cmul(sm(target), input - torch.exp(input):sum(2):log():expandAs(input)):sum(2)
     self.output = losses:sum() / losses:size(1)
   else
-    error('matrix or vector expected')
+    error('matrix or vector expected. input size: ' .. tostring(input:size()))
   end
   return self.output
 end
@@ -46,7 +46,7 @@ function SoftCrossEntropyCriterion:updateGradInput(input, target)
   elseif input:dim() == 2 then
     self.gradInput = (torch.cmul(sm(input), y:sum(2):expandAs(input)) - y) / self.temperature / input:size(1)
   else
-    error('matrix or vector expected')
+    error('matrix or vector expected. input size: ' .. tostring(input:size()))
   end
   return self.gradInput
 end

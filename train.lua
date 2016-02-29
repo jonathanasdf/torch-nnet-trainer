@@ -1,62 +1,46 @@
-function defineTrainingOptions(cmd)
-  cmd:option('-LR', 0.01, 'learning rate')
-  cmd:option('-momentum', 0.9, 'momentum')
-  cmd:option('-batchSize', 32, 'batch size')
-  cmd:option('-epochs', 50, 'num epochs')
-  cmd:option('-epochSize', -1, 'num batches per epochs')
-end
+package.path = package.path .. ';/home/jshen/scripts/?.lua'
 
-local function trainBatch(model, opt, updates, paths, inputs)
-  local parameters, _ = model:getParameters()
-  local optimState = {
-    learningRate = opt.LR,
-    learningRateDecay = 0.0,
-    momentum = opt.momentum,
-    dampening = 0.0,
-    weightDecay = opt.weightDecay
-  }
-  if opt.nGPU > 0 then
-    inputs = inputs:cuda()
-  end
-  new_parameters, _ = optim.sgd(updates(model, inputs), parameters, optimState)
-  parameters, _ = model:getParameters()
-  parameters:copy(new_parameters)
+require 'cutorch'
+require 'cudnn'
+require 'model'
+require 'paths'
+require 'optim'
+require 'dataLoader'
+require 'utils'
 
-  if model.needsSync then
-    model:syncParameters()
-  end
-end
+torch.setdefaulttensortype('torch.FloatTensor')
 
-function train(model, loader, opt, updates)
-  local batchSize = opt.batchSize
-  if batchSize == -1 then
-    batchSize = loader:size()
-  end
+local cmd = torch.CmdLine()
+cmd:argument('-model', 'model to train')
+cmd:argument('-input', 'input file or folder')
+cmd:argument('-output', 'path to save trained model')
+--defined in utils.lua
+defineBaseOptions(cmd)
+defineTrainingOptions(cmd)
+-- Additional processor functions: 
+--   -updates(model, paths, inputs): custom updates function for optim
 
-  local epochSize = opt.epochSize
-  if epochSize == -1 then
-    epochSize = math.ceil(loader:size() / batchSize)
-  end
-  epochSize = math.min(epochSize, math.ceil(loader:size() / batchSize))
+local opt = processArgs(cmd) 
+assert(paths.filep(opt.model), "Cannot find model " .. opt.model)
 
-  for epoch=1,opt.epochs do
-    print("==> training epoch # " .. epoch)
-    local batchNumber = 0
-  
-    model.model:training()
-    cutorch.synchronize()
-    local tm = torch.Timer()
-    loader:runAsync(batchSize, 
-                    epochSize, 
-                    batchSize * epochSize < loader:size(), --shuffle
-                    opt.nThreads, 
-                    bind(trainBatch, model.model, opt, updates)) 
-    cutorch.synchronize()
-    print(string.format('Epoch [%d]: Total Time(s): %.2f', epoch, tm:time().real))
+local loader = DataLoader{
+  path = opt.input,
+  preprocessor = opt.processor.preprocess,
+  verbose = true
+}
 
-    collectgarbage()
-    if opt.output and opt.output ~= "/dev/null" then
-      model:saveDataParallel(opt.output .. ".cached")
-    end
+local model = Model{gpu=opt.gpu, nGPU=opt.nGPU}:load(opt.model)
+
+local function updates(processor, model, paths, inputs)
+  local parameters, grad_parameters = model:getParameters()
+  return function(x)
+    grad_parameters:zero()
+    local outputs = model:forward(inputs)
+    local loss, grad_outputs = processor:processBatch(paths, outputs)
+    model:backward(inputs, grad_outputs)
+    return loss, grad_parameters
   end
 end
+
+model:train(loader, opt, opt.processor.updates or bind(updates, opt.processor))
+model:saveDataParallel(opt.output)

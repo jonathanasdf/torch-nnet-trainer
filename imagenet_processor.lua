@@ -1,15 +1,27 @@
 require 'image'
 require 'paths'
+require 'nn'
+local class = require 'class'
+local Processor = require 'processor'
 
-local M = {}
+local M = class('ImageNetProcessor', 'Processor')
 
-local words = {}
-local lookup = {}
-local n = 1
-for line in io.lines'/file/jshen/data/ILSVRC2012_devkit_t12/words.txt' do
-  table.insert(words, string.sub(line,11))
-  lookup[string.sub(line, 1, 9)] = n
-  n = n + 1
+function M:__init(opt)
+  Processor.__init(self, opt)
+
+  self.words = {}
+  self.lookup = {}
+  local n = 1
+  for line in io.lines'/file/jshen/data/ILSVRC2012_devkit_t12/words.txt' do
+    table.insert(self.words, string.sub(line,11))
+    self.lookup[string.sub(line, 1, 9)] = n
+    n = n + 1
+  end
+
+  self.criterion = nn.ClassNLLCriterion()
+  if self.opt.nGPU > 0 then
+    self.criterion = self.criterion:cuda()
+  end
 end
 
 function M.preprocess(img)
@@ -37,45 +49,46 @@ end
 local top1 = 0
 local top5 = 0
 local total = 0
-function M.processOutputs(outputs, ...)
-  local pathNames = (...)
-  for i=1,outputs:size(1) do
-    local name = ""
-    for j=1,pathNames[i]:size(1) do
-      if pathNames[i][j] ~= 0 then
-        name = name .. string.char(pathNames[i][j])
-      end
-    end
-    ground_truth = 0
+function M:processBatch(pathNames, outputs)
+  local labels = torch.Tensor(#pathNames)
+  for i=1,#pathNames do
+    local name = pathNames[i]
     if name:find("train") then
-      ground_truth = lookup[string.sub(paths.basename(name), 1, 9)]
+      labels[i] = self.lookup[string.sub(paths.basename(name), 1, 9)]
     elseif name:find("val") then
       local cmd = 'grep -Po "n\\d{8}" /file/jshen/data/ILSVRC2012_bbox_val/' .. paths.basename(name, '.JPEG') .. '.xml'
       local f = assert(io.popen(cmd, 'r'))
       local s = assert(f:read())
       f:close()
-      ground_truth = lookup[s]
+      labels[i] = self.lookup[s]
     end
 
-    local prob, classes = outputs[i]:view(-1):sort(true) 
+    local prob, classes = (#pathNames == 1 and outputs or  outputs[i]):view(-1):sort(true) 
     local result = 'predicted classes for ' .. paths.basename(name) .. ': '
     for j=1,5 do
       local color = ''
-      if classes[j] == ground_truth then
+      if classes[j] == labels[i] then
         if j == 1 then top1 = top1 + 1 end
         top5 = top5 + 1
         color = '\27[33m'
       end
-      result = result .. color .. "(" .. math.floor(prob[j]*100 + 0.5) .. "%) " .. words[classes[j]] .. "\27[0m; "
+      result = result .. color .. "(" .. math.floor(prob[j]*100 + 0.5) .. "%) " .. self.words[classes[j]] .. "\27[0m; "
     end
-    result = result .. "\27[36mground truth: " .. words[ground_truth] .. "\27[0m"
+    result = result .. "\27[36mground truth: " .. self.words[labels[i]] .. "\27[0m"
     print(result)
     
     total = total + 1
   end
+
+  if self.opt.nGPU > 0 then
+    labels = labels:cuda()
+  end
+  local loss = self.criterion:forward(outputs, labels)
+  local grad_outputs = self.criterion:backward(outputs, labels)
+  return loss, grad_outputs
 end
 
-function M.printStats()
+function M:printStats()
   print('Top 1 accuracy: ' .. top1 .. '/' .. total .. ' = ' .. (top1*100.0/total) .. "%")
   print('Top 5 accuracy: ' .. top5 .. '/' .. total .. ' = ' .. (top5*100.0/total) .. "%")
 end

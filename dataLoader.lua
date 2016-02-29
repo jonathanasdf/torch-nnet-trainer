@@ -23,7 +23,7 @@ local initcheck = argcheck{
 
   {name="preprocessor",
    type="function",
-   help="applied to image (ex: for lighting jitter). It takes the image as input",
+   help="applied to image (ex: jittering). It takes the image as input",
    opt = true},
 
   {name="verbose",
@@ -88,9 +88,10 @@ function DataLoader:__init(...)
 end
 
 function DataLoader:loadImage(path)
-  local path = ffi.string(torch.data(path))
   local img = image.load(path, 3, 'float')
-  if self.preprocessor then img = self.preprocessor(img) end 
+  if self.preprocessor then 
+    img = self.preprocessor(img) 
+  end 
   return img
 end
 
@@ -105,51 +106,59 @@ function DataLoader:tableToTensor(table)
   return torch.cat(table, 1)
 end 
 
--- samples with replacement
-function DataLoader:sample(quantity)
-  quantity = quantity or 1
+function DataLoader:retrieve(indices)
   local paths = {}
   local data = {}
+  local quantity = type(indices) == 'table' and #indices or indices:nElement()
   for i=1,quantity do
-    local index = math.ceil(torch.uniform() * self:size())
-    path = self.imagePath[index]
+    -- load the sample
+    local path = ffi.string(torch.data(self.imagePath[indices[i]]))
     table.insert(paths, path) 
     table.insert(data, self:loadImage(path))
   end
   return paths, self:tableToTensor(data)
 end
 
+-- samples with replacement
+function DataLoader:sample(quantity)
+  quantity = quantity or 1
+  local indices = {}
+  for i=1,quantity do
+    local index = math.ceil(torch.uniform() * self:size())
+    table.insert(indices, index)
+  end
+  return self:retrieve(indices)
+end
+
 function DataLoader:get(i1, i2)
-  local indices, quantity
+  local indices
   if type(i1) == 'number' then
     if type(i2) == 'number' then -- range of indices
       i2 = math.min(i2, self:size())
       indices = torch.range(i1, i2); 
-      quantity = i2 - i1 + 1;
     else -- single index 
-      indices = {i1}; quantity = 1 
+      indices = {i1}
     end 
   elseif type(i1) == 'table' then
-    indices = i1; quantity = #i1;      -- table
+    indices = i1 -- table
   elseif (type(i1) == 'userdata' and i1:nDimension() == 1) then
+    indices = i1 -- tensor
   else
     error('Unsupported input types: ' .. type(i1) .. ' ' .. type(i2))    
   end
-  assert(quantity > 0)
-
-  -- now that indices has been initialized, get the samples
-  local paths = {}
-  local data = {}
-  for i=1,quantity do
-    -- load the sample
-    path = self.imagePath[indices[i]]
-    table.insert(paths, path) 
-    table.insert(data, self:loadImage(path))
-  end
-  return paths, self:tableToTensor(data)
+  return self:retrieve(indices)
 end
 
 function DataLoader:runAsync(batchSize, epochSize, shuffle, nThreads, resultHandler)
+  if batchSize == -1 then
+    batchSize = self:size()
+  end
+
+  if epochSize == -1 then
+    epochSize = math.ceil(self:size() / batchSize)
+  end
+  epochSize = math.min(epochSize, math.ceil(self:size() / batchSize))
+
   threads = Threads(
     nThreads,
     function()

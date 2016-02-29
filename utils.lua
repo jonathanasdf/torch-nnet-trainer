@@ -1,7 +1,33 @@
 function defineBaseOptions(cmd)
+  cmd:argument(
+    '-processor',
+    'REQUIRED. lua file that preprocesses input and handles output. '
+    .. 'Functions that can be defined:\n'
+    .. '    -setOptions(opt): Passes command line options to the processor\n'
+    .. '    -preprocess(img): takes a single img and prepares it for the network\n'
+    .. '    -processBatch(paths, outputs): returns [loss, grad_outputs]\n'
+  )
+  cmd:option('-processor_opts', '', 'additional options for the processor')
   cmd:option('-nThreads', 8, 'number of threads')
   cmd:option('-gpu', "", 'comma separated list of GPUs to use')
   cmd:option('-nGPU', 4, 'number of GPU to use. Ignored if gpu is set')
+  cmd:option('-batchSize', 32, 'batch size')
+end
+
+function defineTrainingOptions(cmd)
+  cmd:option('-LR', 0.01, 'learning rate')
+  cmd:option('-momentum', 0.9, 'momentum')
+  cmd:option('-epochs', 50, 'num epochs')
+  cmd:option('-epochSize', -1, 'num batches per epochs')
+end
+
+function processArgs(cmd)
+  local opt = cmd:parse(arg or {})
+  if opt.processor == '' then
+    error('A processor must be supplied.')
+  end
+  opt.processor = dofile(opt.processor).new(opt)
+  return opt
 end
 
 function tablelength(T)

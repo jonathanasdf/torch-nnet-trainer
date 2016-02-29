@@ -45,7 +45,9 @@ function M:__init(...)
     end
   end
   self.nGPU = tablelength(self.gpu)
-  cutorch.setDevice(self.gpu[1])
+  if self.nGPU > 0 then
+    cutorch.setDevice(self.gpu[1])
+  end
 
   if self.nGPU == 0 and self.backend ~= 'nn' then
     print('\27[31mWarning: Only the nn backend can be used with no GPUs. Switching backend to nn.\27[0m')
@@ -53,44 +55,79 @@ function M:__init(...)
   end
 end
 
-
-
-function M:create(path)
-  assert(paths.filep(path), 'File not found: ' .. path)
-  print('Creating model from file: ' .. path)
-  gpu = self.gpu --make variable visible for dofile below
-  self.model = paths.dofile(path)
-  if self.backend == 'cudnn' then
-    cudnn.convert(self.model, cudnn)
-  elseif self.backend ~= 'nn' then
-    error('Unsupported backend')
-  end
-  print('=> Model')
-  print(self.model)
-end
-
 function M:load(path)
-  if paths.extname(path) == "lua" then
-    self:create(path)
-    return
-  end
   assert(paths.filep(path), 'File not found: ' .. path)
-  print('Loading model from file: ' .. path)
-  self.model = self:loadDataParallel(path)
+  if paths.extname(path) == "lua" then
+    print('Creating model from file: ' .. path)
+    gpu = self.gpu --make variable visible for dofile below
+    self.model = paths.dofile(path)
+    if self.backend == 'cudnn' then
+      cudnn.convert(self.model, cudnn)
+    elseif self.backend ~= 'nn' then
+      error('Unsupported backend')
+    end
+  else
+    print('Loading model from file: ' .. path)
+    self.model = self:loadDataParallel(path)
+  end
   print('=> Model')
   print(self.model)
+  return self
 end
 
-function M:forward(input, deterministic)
+local function trainBatch(model, opt, updates, paths, inputs)
+  local parameters, _ = model:getParameters()
+  local optimState = {
+    learningRate = opt.LR,
+    learningRateDecay = 0.0,
+    momentum = opt.momentum,
+    dampening = 0.0,
+    weightDecay = opt.weightDecay
+  }
+  if opt.nGPU > 0 then
+    inputs = inputs:cuda()
+  end
+  new_parameters, _ = optim.sgd(updates(model, paths, inputs), parameters, optimState)
+  parameters, _ = model:getParameters()
+  parameters:copy(new_parameters)
+
+  if model.model.needsSync then
+    model.model:syncParameters()
+  end
+end
+
+function M:train(loader, opt, updates)
+  for epoch=1,opt.epochs do
+    print("==> training epoch # " .. epoch)
+    local batchNumber = 0
+  
+    self.model:training()
+    cutorch.synchronize()
+    local tm = torch.Timer()
+    loader:runAsync(opt.batchSize, 
+                    opt.epochSize, 
+                    true, --shuffle
+                    opt.nThreads, 
+                    bind(trainBatch, self, opt, updates)) 
+    cutorch.synchronize()
+    print(string.format('Epoch [%d]: Total Time(s): %.2f', epoch, tm:time().real))
+
+    if opt.output and opt.output ~= "/dev/null" then
+      self:saveDataParallel(opt.output .. ".cached")
+    end
+  end
+end
+
+function M:forward(inputs, deterministic)
   if deterministic then
     self.model:evaluate()
   else
     self.model:training()
   end
   if self.nGPU > 0 then
-    input = input:cuda()
+    inputs = inputs:cuda()
   end
-  return self.model:forward(input)
+  return self.model:forward(inputs)
 end
 
 function M:getParameters()
