@@ -13,15 +13,16 @@ function defineBaseOptions(cmd)
   cmd:option('-nGPU', 4, 'number of GPU to use. Ignored if gpu is set')
   cmd:option('-batchSize', 32, 'batch size')
   cmd:option('-cache_every', 20, 'save model every n epochs')
-  cmd:option('-val', '', 'validation data')
-  cmd:option('-val_every', 20, 'run validation every n epochs')
 end
 
 function defineTrainingOptions(cmd)
-  cmd:option('-LR', 0.01, 'learning rate')
+  cmd:option('-LR', 0.001, 'learning rate')
   cmd:option('-momentum', 0.9, 'momentum')
   cmd:option('-epochs', 50, 'num epochs')
   cmd:option('-epochSize', -1, 'num batches per epochs')
+  cmd:option('-val', '', 'validation data')
+  cmd:option('-valSize', -1, 'num batches to validate')
+  cmd:option('-val_every', 20, 'run validation every n epochs')
   cmd:option('-optimState', '', 'optimState to resume from')
 end
 
@@ -31,7 +32,36 @@ function processArgs(cmd)
     error('A processor must be supplied.')
   end
   opt.processor = dofile(opt.processor).new(opt)
+
+  local Threads = require 'threads'
+  Threads.serialization('threads.sharedserialize')
+  threads = Threads(
+    opt.nThreads,
+    function()
+      require 'torch'
+      require 'cutorch'
+      require 'cunn'
+      require 'cudnn'
+      require 'fbnn'
+      require 'image'
+      require 'paths'
+      require 'utils'
+      torch.setdefaulttensortype('torch.FloatTensor')
+    end
+  )
+
   return opt
+end
+
+function setJobs(n)
+  numJobs = n
+  jobsDone = 0
+  xlua.progress(jobsDone, numJobs)
+end
+
+function jobDone()
+  jobsDone = jobsDone + 1
+  xlua.progress(jobsDone, numJobs)
 end
 
 function tablelength(T)
@@ -45,7 +75,7 @@ function imageTableToTensor(T) -- Assumes 3 channels
     T[k] = v:reshape(1, v:size(1), v:size(2), v:size(3))
   end
   return torch.cat(T, 1)
-end 
+end
 
 function string:split(sep)
   local sep, fields = sep or ',', {}

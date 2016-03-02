@@ -39,14 +39,15 @@ if opt.nGPU > 0 then
 end
 
 local function updates(teacher, student, paths, inputs)
-  return function(x)
-    local logits = teacher:forward(inputs, true)
-    local student_logits = student:forward(inputs)
-    local loss = criterion:forward(student_logits, logits)
-    local grad_outputs = criterion:backward(student_logits, logits)
+  local logits = teacher:forward(inputs, true)
+  local student_logits = student:forward(inputs)
+  local loss = criterion:forward(student_logits, logits)
+  local grad_outputs = criterion:backward(student_logits, logits)
 
-    student:zeroGradParameters()
-    student:backward(inputs, grad_outputs)
+  student:zeroGradParameters()
+  student:backward(inputs, grad_outputs)
+
+  return function(x)
     return loss, student.gradParameters
   end
 end

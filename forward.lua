@@ -24,7 +24,6 @@ end
 DataLoader{
   path = opt.input,
   preprocessor = opt.processor.preprocess,
-  nThreads = opt.nThreads,
   verbose = true
 }:runAsync(opt.batchSize, 
            -1,          -- epochSize

@@ -24,7 +24,7 @@ local initcheck = argcheck{
   type='string',
   help='Options: cudnn | ccn2 | cunn | nn',
   default = 'cudnn'},
-  
+
   {name='gpu',
   type='string',
   help='Comma-separated list of GPUs to use',
@@ -77,7 +77,7 @@ function M:load(path)
   return self
 end
 
-local function trainBatch(model, updates, paths, inputs) 
+local function trainBatch(model, updates, optimState, paths, inputs)
   if model.nGPU > 0 then
     inputs = inputs:cuda()
   end
@@ -85,14 +85,18 @@ local function trainBatch(model, updates, paths, inputs)
   if model.model.needsSync then
     model.model:syncParameters()
   end
+  jobDone()
 end
 
 local function validBatch(model, processor, paths, inputs)
   if model.nGPU > 0 then
     inputs = inputs:cuda()
   end
-  model.valid_loss = model.valid_loss + 
+
+  model.valid_loss = model.valid_loss +
     processor:processBatch(paths, model:forward(inputs, true), true)
+  model.valid_count = model.valid_count + #paths
+  jobDone()
 end
 
 function M:train(opt, updates)
@@ -103,7 +107,6 @@ function M:train(opt, updates)
   local train_loader = DataLoader{
     path = opt.input,
     preprocessor = opt.processor.preprocess,
-    nThreads = opt.nThreads,
     verbose = true
   }
 
@@ -112,7 +115,6 @@ function M:train(opt, updates)
     valid_loader = DataLoader{
       path = opt.val,
       preprocessor = opt.processor.preprocess,
-      nThreads = opt.nThreads,
       verbose = true
     }
   end
@@ -125,6 +127,7 @@ function M:train(opt, updates)
       learningRateDecay = 0.0,
       momentum = opt.momentum,
       dampening = 0.0,
+      nesterov = true,
       weightDecay = opt.weightDecay
     }
   end
@@ -134,27 +137,30 @@ function M:train(opt, updates)
   for epoch=1,opt.epochs do
     print('==> training epoch # ' .. epoch)
     local batchNumber = 0
-  
+
     self.model:training()
     cutorch.synchronize()
     local tm = torch.Timer()
-    train_loader:runAsync(opt.batchSize, 
-                    opt.epochSize, 
-                    true, --shuffle
-                    bind(trainBatch, self, updates)) 
+    train_loader:runAsync(opt.batchSize,
+                          opt.epochSize,
+                          true, --shuffle
+                          bind(trainBatch, self, updates, opt.optimState))
     cutorch.synchronize()
-    print(string.format('Epoch [%d]: Total Time(s): %.2f', epoch, tm:time().real))
 
-    if opt.cache_every and epoch % opt.cache_every == 0 and 
+    if opt.cache_every and epoch % opt.cache_every == 0 and
        opt.output and opt.output ~= '/dev/null' then
       self:saveDataParallel(opt.output .. '.cached')
       torch.save(opt.output .. '.optimState', opt.optimState)
     end
 
     if opt.val_every and epoch % opt.val_every == 0 and opt.val ~= '' then
+      self.valid_count = 0
       self.valid_loss = 0
-      valid_loader:runAsync(opt.batchSize, -1, false, bind(validBatch, self, opt.processor))
-      self.valid_loss = self.valid_loss / valid_loader:size()
+      valid_loader:runAsync(opt.batchSize,
+                            opt.valSize,
+                            false, --don't shuffle
+                            bind(validBatch, self, opt.processor))
+      self.valid_loss = self.valid_loss / self.valid_count
       print(string.format('  Validation loss: %.6f', self.valid_loss))
     end
   end

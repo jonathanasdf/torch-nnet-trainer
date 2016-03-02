@@ -23,11 +23,10 @@ assert(paths.filep(opt.model), 'Cannot find model ' .. opt.model)
 local model = Model{gpu=opt.gpu, nGPU=opt.nGPU}:load(opt.model)
 
 local function updates(processor, model, paths, inputs)
+  local loss, grad_outputs = processor:processBatch(paths, model:forward(inputs))
+  model:zeroGradParameters()
+  model:backward(inputs, grad_outputs)
   return function(x)
-    local loss, grad_outputs = processor:processBatch(paths, model:forward(inputs))
-
-    model:zeroGradParameters()
-    model:backward(inputs, grad_outputs)
     return loss, model.gradParameters
   end
 end
