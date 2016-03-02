@@ -1,5 +1,3 @@
-package.path = package.path .. ';/home/jshen/scripts/?.lua'
-
 require 'paths'
 require 'xlua'
 require 'image'
@@ -9,7 +7,6 @@ local ffi = require 'ffi'
 local argcheck = require 'argcheck'
 local Threads = require 'threads'
 Threads.serialization('threads.sharedserialize')
-torch.setdefaulttensortype('torch.FloatTensor')
 
 local initcheck = argcheck{
   pack=true,
@@ -17,18 +14,23 @@ local initcheck = argcheck{
     A data loader class for loading images optimized for extremely large datasets.
     Tested only on Linux (as it uses command-line linux utilities to scale up)
   ]],
-  {name="path",
-   type="string",
-   help="path of directories with images"},
+  {name='path',
+   type='string',
+   help='path of directories with images'},
 
-  {name="preprocessor",
-   type="function",
-   help="applied to image (ex: jittering). It takes the image as input",
+  {name='preprocessor',
+   type='function',
+   help='applied to image (ex: jittering). It takes the image as input',
    opt = true},
 
-  {name="verbose",
-   type="boolean",
-   help="Verbose mode during initialization",
+  {name='nThreads',
+   type='number',
+   help='number of threads to use',
+   default = 1},
+
+  {name='verbose',
+   type='boolean',
+   help='Verbose mode during initialization',
    default = false},
 }
 
@@ -37,6 +39,15 @@ local dataLoader = torch.class('DataLoader')
 function DataLoader:__init(...)
   local args = initcheck(...)
   for k,v in pairs(args) do self[k] = v end  
+
+  self.threads = Threads(
+    self.nThreads,
+    function()
+      require 'image'
+      require 'utils'
+      torch.setdefaulttensortype('torch.FloatTensor')
+    end
+  )
 
   ----------------------------------------------------------------------
   -- Options for the GNU find command
@@ -58,65 +69,33 @@ function DataLoader:__init(...)
   os.execute('rm -f ' .. tmpfile)
 
   --==========================================================================
-  print('load the concatenated list of sample paths to self.imagePath')
-  local maxPathLength = tonumber(sys.fexecute("wc -L '" 
-        .. imageList .. "' | " 
-        .. "cut -f1 -d' '")) + 1
-  local length = tonumber(sys.fexecute("wc -l '" 
-        .. imageList .. "' | " 
-        .. "cut -f1 -d' '"))
-  assert(length > 0, "Could not find any image file in the given input paths")
-  assert(maxPathLength > 0, "paths of files are length 0?")
+  local length = tonumber(sys.fexecute('wc -l "' .. imageList .. '" | ' .. 'cut -f1 -d" "'))
+  assert(length > 0, 'Could not find any image file in the given input paths')
 
-  self.imagePath = torch.CharTensor()
-  self.imagePath:resize(length, maxPathLength):fill(0)
-  local s_data = self.imagePath:data()
-  local count = 0
-  for line in io.lines(imageList) do
-    ffi.copy(s_data, line)
-    s_data = s_data + maxPathLength
-    count = count + 1
-    if self.verbose and count % 10000 == 0 then 
-      xlua.progress(count, length) 
-    end 
+  self.imagePaths = io.open(imageList)
+  self.lineOffset = {}
+  for line in self.imagePaths:lines() do
+    table.insert(self.lineOffset, self.imagePaths:seek())
   end
 
-  self.numSamples = self.imagePath:size(1)
-  print(self.numSamples ..  ' samples found.')
-
-  os.execute('rm -f "' .. imageList .. '"')
+  self.numSamples = #self.lineOffset
+  print(self.numSamples ..  ' images found.')
 end
 
-function DataLoader:loadImage(path)
-  local img = image.load(path, 3, 'float')
-  if self.preprocessor then 
-    img = self.preprocessor(img) 
-  end 
-  return img
-end
-
-function DataLoader:size(class, list)
+function DataLoader:size()
   return self.numSamples
 end
 
-function DataLoader:tableToTensor(table)
-  for k, v in pairs(table) do
-    table[k] = v:reshape(1, v:size(1), v:size(2), v:size(3))
-  end
-  return torch.cat(table, 1)
-end 
-
 function DataLoader:retrieve(indices)
   local paths = {}
-  local data = {}
   local quantity = type(indices) == 'table' and #indices or indices:nElement()
   for i=1,quantity do
     -- load the sample
-    local path = ffi.string(torch.data(self.imagePath[indices[i]]))
+    self.imagePaths:seek('set', self.lineOffset[indices[i]])
+    local path = self.imagePaths:read()
     table.insert(paths, path) 
-    table.insert(data, self:loadImage(path))
   end
-  return paths, self:tableToTensor(data)
+  return paths
 end
 
 -- samples with replacement
@@ -149,52 +128,46 @@ function DataLoader:get(i1, i2)
   return self:retrieve(indices)
 end
 
-function DataLoader:runAsync(batchSize, epochSize, shuffle, nThreads, resultHandler)
+function DataLoader:runAsync(batchSize, epochSize, shuffle, resultHandler)
   if batchSize == -1 then
     batchSize = self:size()
   end
 
   if epochSize == -1 then
-    epochSize = math.ceil(self:size() / batchSize)
+    epochSize = math.ceil(self:size() * 1.0 / batchSize)
   end
-  epochSize = math.min(epochSize, math.ceil(self:size() / batchSize))
-
-  threads = Threads(
-    nThreads,
-    function()
-      package.path = package.path .. ';/home/jshen/scripts/?.lua'
-    end,
-    function()
-      require 'dataLoader'
-    end,
-    function(threadid)
-      loader = self
-    end
-  )
+  epochSize = math.min(epochSize, math.ceil(self:size() * 1.0 / batchSize))
 
   local jobDone = 0
   for i=1,epochSize do
-    threads:addjob(
-      function()
-        if shuffle then
-          return loader:sample(batchSize)
-        else
-          local indexStart = (i-1) * batchSize + 1
-          local indexEnd = (indexStart + batchSize - 1)
-          return loader:get(indexStart, indexEnd)
+    local paths
+    if shuffle then
+      paths = self:sample(batchSize)
+    else
+      local indexStart = (i-1) * batchSize + 1
+      local indexEnd = (indexStart + batchSize - 1)
+      paths = self:get(indexStart, indexEnd)
+    end
+
+    self.threads:addjob(
+      function(preprocessor)
+        local inputs = {}
+        for j=1,#paths do
+          table.insert(inputs, preprocessor(image.load(paths[j], 3, 'float')))
         end
+        return imageTableToTensor(inputs)
       end,
-      function(paths, inputs)
+      function(inputs)
+        resultHandler(paths, inputs)
         jobDone = jobDone + 1
         if self.verbose and epochSize > 1 then 
           xlua.progress(jobDone, epochSize) 
         end
-        resultHandler(paths, inputs)
-      end
+      end,
+      self.preprocessor
     )
   end
-
-  threads:synchronize()
+  self.threads:synchronize()
 end
 
 return dataLoader

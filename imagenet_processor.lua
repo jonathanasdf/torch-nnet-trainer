@@ -1,6 +1,7 @@
 require 'image'
 require 'paths'
 require 'nn'
+require 'fbnn'
 local class = require 'class'
 local Processor = require 'processor'
 
@@ -18,7 +19,8 @@ function M:__init(opt)
     n = n + 1
   end
 
-  self.criterion = nn.ClassNLLCriterion()
+  self.criterion = nn.TrueNLLCriterion()
+  self.criterion.sizeAverage = false
   if self.opt.nGPU > 0 then
     self.criterion = self.criterion:cuda()
   end
@@ -49,13 +51,13 @@ end
 local top1 = 0
 local top5 = 0
 local total = 0
-function M:processBatch(pathNames, outputs)
+function M:processBatch(pathNames, outputs, calculateStats)
   local labels = torch.Tensor(#pathNames)
   for i=1,#pathNames do
     local name = pathNames[i]
-    if name:find("train") then
+    if name:find('train') then
       labels[i] = self.lookup[string.sub(paths.basename(name), 1, 9)]
-    elseif name:find("val") then
+    elseif name:find('val') then
       local cmd = 'grep -Po "n\\d{8}" /file/jshen/data/ILSVRC2012_bbox_val/' .. paths.basename(name, '.JPEG') .. '.xml'
       local f = assert(io.popen(cmd, 'r'))
       local s = assert(f:read())
@@ -63,21 +65,23 @@ function M:processBatch(pathNames, outputs)
       labels[i] = self.lookup[s]
     end
 
-    local prob, classes = (#pathNames == 1 and outputs or  outputs[i]):view(-1):sort(true) 
-    local result = 'predicted classes for ' .. paths.basename(name) .. ': '
-    for j=1,5 do
-      local color = ''
-      if classes[j] == labels[i] then
-        if j == 1 then top1 = top1 + 1 end
-        top5 = top5 + 1
-        color = '\27[33m'
+    if calculateStats then
+      local prob, classes = (#pathNames == 1 and outputs or outputs[i]):view(-1):sort(true) 
+      local result = 'predicted classes for ' .. paths.basename(name) .. ': '
+      for j=1,5 do
+        local color = ''
+        if classes[j] == labels[i] then
+          if j == 1 then top1 = top1 + 1 end
+          top5 = top5 + 1
+          color = '\27[33m'
+        end
+        result = result .. color .. '(' .. math.floor(prob[j]*100 + 0.5) .. '%) ' .. self.words[classes[j]] .. '\27[0m; '
       end
-      result = result .. color .. "(" .. math.floor(prob[j]*100 + 0.5) .. "%) " .. self.words[classes[j]] .. "\27[0m; "
-    end
-    result = result .. "\27[36mground truth: " .. self.words[labels[i]] .. "\27[0m"
-    print(result)
+      result = result .. '\27[36mground truth: ' .. self.words[labels[i]] .. '\27[0m'
+      --print(result)
     
-    total = total + 1
+      total = total + 1
+    end
   end
 
   if self.opt.nGPU > 0 then
@@ -89,8 +93,8 @@ function M:processBatch(pathNames, outputs)
 end
 
 function M:printStats()
-  print('Top 1 accuracy: ' .. top1 .. '/' .. total .. ' = ' .. (top1*100.0/total) .. "%")
-  print('Top 5 accuracy: ' .. top5 .. '/' .. total .. ' = ' .. (top5*100.0/total) .. "%")
+  print('Top 1 accuracy: ' .. top1 .. '/' .. total .. ' = ' .. (top1*100.0/total) .. '%')
+  print('Top 5 accuracy: ' .. top5 .. '/' .. total .. ' = ' .. (top5*100.0/total) .. '%')
 end
 
 return M

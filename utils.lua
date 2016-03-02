@@ -9,9 +9,12 @@ function defineBaseOptions(cmd)
   )
   cmd:option('-processor_opts', '', 'additional options for the processor')
   cmd:option('-nThreads', 8, 'number of threads')
-  cmd:option('-gpu', "", 'comma separated list of GPUs to use')
+  cmd:option('-gpu', '', 'comma separated list of GPUs to use')
   cmd:option('-nGPU', 4, 'number of GPU to use. Ignored if gpu is set')
   cmd:option('-batchSize', 32, 'batch size')
+  cmd:option('-cache_every', 20, 'save model every n epochs')
+  cmd:option('-val', '', 'validation data')
+  cmd:option('-val_every', 20, 'run validation every n epochs')
 end
 
 function defineTrainingOptions(cmd)
@@ -19,6 +22,7 @@ function defineTrainingOptions(cmd)
   cmd:option('-momentum', 0.9, 'momentum')
   cmd:option('-epochs', 50, 'num epochs')
   cmd:option('-epochSize', -1, 'num batches per epochs')
+  cmd:option('-optimState', '', 'optimState to resume from')
 end
 
 function processArgs(cmd)
@@ -36,9 +40,16 @@ function tablelength(T)
   return count
 end
 
+function imageTableToTensor(T) -- Assumes 3 channels
+  for k, v in pairs(T) do
+    T[k] = v:reshape(1, v:size(1), v:size(2), v:size(3))
+  end
+  return torch.cat(T, 1)
+end 
+
 function string:split(sep)
-  local sep, fields = sep or ",", {}
-  local pattern = string.format("([^%s]+)", sep)
+  local sep, fields = sep or ',', {}
+  local pattern = string.format('([^%s]+)', sep)
   self:gsub(pattern, function(c) fields[#fields+1] = c end)
   return fields
 end
@@ -52,7 +63,7 @@ function findModuleByName(model, name)
   return nil
 end
 
-local va = require "vararg"
+local va = require 'vararg'
 function bind(f, ...)
   local outer_args = va(...)
   local function closure (...)

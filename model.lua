@@ -10,7 +10,9 @@ require 'torch'
 require 'cutorch'
 require 'cunn'
 require 'cudnn'
+require 'optim'
 require 'paths'
+require 'dataLoader'
 require 'utils'
 local argcheck = require 'argcheck'
 
@@ -18,19 +20,19 @@ local M = torch.class('Model')
 
 local initcheck = argcheck{
   pack=true,
-  {name="backend",
-  type="string",
-  help="Options: cudnn | ccn2 | cunn | nn",
-  default = "cudnn"},
+  {name='backend',
+  type='string',
+  help='Options: cudnn | ccn2 | cunn | nn',
+  default = 'cudnn'},
   
-  {name="gpu",
-  type="string",
-  help="Comma-separated list of GPUs to use",
-  default = ""},
+  {name='gpu',
+  type='string',
+  help='Comma-separated list of GPUs to use',
+  default = ''},
 
-  {name="nGPU",
-  type="number",
-  help="Number of GPUs to use. Ignored if gpu is set above.",
+  {name='nGPU',
+  type='number',
+  help='Number of GPUs to use. Ignored if gpu is set above.',
   default = 4}
 }
 
@@ -57,7 +59,7 @@ end
 
 function M:load(path)
   assert(paths.filep(path), 'File not found: ' .. path)
-  if paths.extname(path) == "lua" then
+  if paths.extname(path) == 'lua' then
     print('Creating model from file: ' .. path)
     gpu = self.gpu --make variable visible for dofile below
     self.model = paths.dofile(path)
@@ -75,45 +77,85 @@ function M:load(path)
   return self
 end
 
-local function trainBatch(model, opt, updates, paths, inputs)
-  local parameters, _ = model:getParameters()
-  local optimState = {
-    learningRate = opt.LR,
-    learningRateDecay = 0.0,
-    momentum = opt.momentum,
-    dampening = 0.0,
-    weightDecay = opt.weightDecay
-  }
-  if opt.nGPU > 0 then
+local function trainBatch(model, updates, paths, inputs) 
+  if model.nGPU > 0 then
     inputs = inputs:cuda()
   end
-  new_parameters, _ = optim.sgd(updates(model, paths, inputs), parameters, optimState)
-  parameters, _ = model:getParameters()
-  parameters:copy(new_parameters)
-
+  optim.sgd(updates(model, paths, inputs), model.parameters, optimState)
   if model.model.needsSync then
     model.model:syncParameters()
   end
 end
 
-function M:train(loader, opt, updates)
+local function validBatch(model, processor, paths, inputs)
+  if model.nGPU > 0 then
+    inputs = inputs:cuda()
+  end
+  model.valid_loss = model.valid_loss + 
+    processor:processBatch(paths, model:forward(inputs, true), true)
+end
+
+function M:train(opt, updates)
+  if not(opt.input) then
+    error('Input must be defined for training.')
+  end
+
+  local train_loader = DataLoader{
+    path = opt.input,
+    preprocessor = opt.processor.preprocess,
+    nThreads = opt.nThreads,
+    verbose = true
+  }
+
+  local valid_loader
+  if opt.val ~= '' then
+    valid_loader = DataLoader{
+      path = opt.val,
+      preprocessor = opt.processor.preprocess,
+      nThreads = opt.nThreads,
+      verbose = true
+    }
+  end
+
+  if opt.optimState ~= '' then
+    opt.optimState = torch.load(opt.optimState)
+  else
+    opt.optimState = {
+      learningRate = opt.LR,
+      learningRateDecay = 0.0,
+      momentum = opt.momentum,
+      dampening = 0.0,
+      weightDecay = opt.weightDecay
+    }
+  end
+
+  self.parameters, self.gradParameters = self.model:getParameters()
+
   for epoch=1,opt.epochs do
-    print("==> training epoch # " .. epoch)
+    print('==> training epoch # ' .. epoch)
     local batchNumber = 0
   
     self.model:training()
     cutorch.synchronize()
     local tm = torch.Timer()
-    loader:runAsync(opt.batchSize, 
+    train_loader:runAsync(opt.batchSize, 
                     opt.epochSize, 
                     true, --shuffle
-                    opt.nThreads, 
-                    bind(trainBatch, self, opt, updates)) 
+                    bind(trainBatch, self, updates)) 
     cutorch.synchronize()
     print(string.format('Epoch [%d]: Total Time(s): %.2f', epoch, tm:time().real))
 
-    if opt.output and opt.output ~= "/dev/null" then
-      self:saveDataParallel(opt.output .. ".cached")
+    if opt.cache_every and epoch % opt.cache_every == 0 and 
+       opt.output and opt.output ~= '/dev/null' then
+      self:saveDataParallel(opt.output .. '.cached')
+      torch.save(opt.output .. '.optimState', opt.optimState)
+    end
+
+    if opt.val_every and epoch % opt.val_every == 0 and opt.val ~= '' then
+      self.valid_loss = 0
+      valid_loader:runAsync(opt.batchSize, -1, false, bind(validBatch, self, opt.processor))
+      self.valid_loss = self.valid_loss / valid_loader:size()
+      print(string.format('  Validation loss: %.6f', self.valid_loss))
     end
   end
 end
@@ -130,10 +172,6 @@ function M:forward(inputs, deterministic)
   return self.model:forward(inputs)
 end
 
-function M:getParameters()
-  return self.model:getParameters()
-end
-   
 function M:zeroGradParameters()
   self.model:zeroGradParameters()
 end

@@ -5,6 +5,7 @@ local SoftCrossEntropyCriterion, parent = torch.class('SoftCrossEntropyCriterion
 function SoftCrossEntropyCriterion:__init(temperature)
   parent.__init(self)
   self.temperature = temperature
+  self.sizeAverage = true
 end
 
 local function sm(input)
@@ -24,8 +25,10 @@ function SoftCrossEntropyCriterion:updateOutput(input, target)
   if input:dim() == 1 then
     self.output = -torch.dot(sm(target), input - math.log(torch.exp(input):sum()))
   elseif input:dim() == 2 then  
-    local losses = -torch.cmul(sm(target), input - torch.exp(input):sum(2):log():expandAs(input)):sum(2)
-    self.output = losses:sum() / losses:size(1)
+    self.output = -(torch.cmul(sm(target), input - torch.exp(input):sum(2):log():expandAs(input)):sum(2)):sum()
+    if self.sizeAverage then
+      self.output = self.output / input:size(1)
+    end
   else
     error('matrix or vector expected. input size: ' .. tostring(input:size()))
   end
@@ -39,12 +42,16 @@ end
 function SoftCrossEntropyCriterion:updateGradInput(input, target)
   input = input:squeeze() / self.temperature
   target = type(target) == 'number' and target or target:squeeze() / self.temperature
+
   local y = sm(target)
   self.gradInput:resizeAs(input)
   if input:dim() == 1 then
     self.gradInput = (sm(input) * y:sum() - y) / self.temperature
   elseif input:dim() == 2 then
-    self.gradInput = (torch.cmul(sm(input), y:sum(2):expandAs(input)) - y) / self.temperature / input:size(1)
+    self.gradInput = (torch.cmul(sm(input), y:sum(2):expandAs(input)) - y) / self.temperature 
+    if self.sizeAverage then
+      self.gradInput = self.gradInput / input:size(1)
+    end
   else
     error('matrix or vector expected. input size: ' .. tostring(input:size()))
   end

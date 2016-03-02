@@ -1,15 +1,12 @@
 package.path = package.path .. ';/home/jshen/scripts/?.lua'
+torch.setdefaulttensortype('torch.FloatTensor')
 
 require 'cutorch'
 require 'cudnn'
 require 'model'
 require 'paths'
-require 'optim'
-require 'dataLoader'
 require 'utils'
 require 'SoftCrossEntropyCriterion'
-
-torch.setdefaulttensortype('torch.FloatTensor')
 
 local cmd = torch.CmdLine()
 cmd:argument('-teacher', 'teacher model to load')
@@ -21,14 +18,8 @@ defineTrainingOptions(cmd) --defined in train.lua
 cmd:option('-T', 4, 'temperature')
 
 local opt = processArgs(cmd) 
-assert(paths.filep(opt.teacher), "Cannot find teacher model " .. opt.teacher)
-assert(paths.filep(opt.student), "Cannot find student model " .. opt.student)
-
-local loader = DataLoader{
-  path = opt.input,
-  preprocessor = opt.processor.preprocess,
-  verbose = true
-}
+assert(paths.filep(opt.teacher), 'Cannot find teacher model ' .. opt.teacher)
+assert(paths.filep(opt.student), 'Cannot find student model ' .. opt.student)
 
 local teacher = Model{gpu=opt.gpu, nGPU=opt.nGPU}:load(opt.teacher)
 if #teacher.model:findModules('cudnn.SoftMax') ~= 0 or 
@@ -48,22 +39,19 @@ if opt.nGPU > 0 then
 end
 
 local function updates(teacher, student, paths, inputs)
-  local parameters, grad_parameters = student:getParameters()
-  
   return function(x)
-    grad_parameters:zero()
-
     local logits = teacher:forward(inputs, true)
     local student_logits = student:forward(inputs)
     local loss = criterion:forward(student_logits, logits)
     local grad_outputs = criterion:backward(student_logits, logits)
 
+    student:zeroGradParameters()
     student:backward(inputs, grad_outputs)
-    return loss, grad_parameters
+    return loss, student.gradParameters
   end
 end
 
-student:train(loader, opt, bind(updates, teacher))
+student:train(opt, bind(updates, teacher))
 if student.model.backend == 'cudnn' then
   student.model:add(cudnn.SoftMax())
 else
