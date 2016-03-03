@@ -1,4 +1,3 @@
-Loader should get processor to extract labels and return them
-Once loader returns labels, implement default updates function in train.lua
 Allow for customization of sgd strategy
+Optimize a bit more to reduce amount of garbage
 Add README and upload to github?

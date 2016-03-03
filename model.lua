@@ -72,6 +72,8 @@ function M:load(path)
     print('Loading model from file: ' .. path)
     self.model = self:loadDataParallel(path)
   end
+  self.parameters, self.gradParameters = self.model:getParameters()
+
   print('=> Model')
   print(self.model)
   return self
@@ -132,26 +134,14 @@ function M:train(opt, updates)
     }
   end
 
-  self.parameters, self.gradParameters = self.model:getParameters()
-
   for epoch=1,opt.epochs do
     print('==> training epoch # ' .. epoch)
     local batchNumber = 0
 
-    self.model:training()
-    cutorch.synchronize()
-    local tm = torch.Timer()
     train_loader:runAsync(opt.batchSize,
                           opt.epochSize,
                           true, --shuffle
                           bind(trainBatch, self, updates, opt.optimState))
-    cutorch.synchronize()
-
-    if opt.cache_every and epoch % opt.cache_every == 0 and
-       opt.output and opt.output ~= '/dev/null' then
-      self:saveDataParallel(opt.output .. '.cached')
-      torch.save(opt.output .. '.optimState', opt.optimState)
-    end
 
     if opt.val_every and epoch % opt.val_every == 0 and opt.val ~= '' then
       self.valid_count = 0
@@ -162,6 +152,12 @@ function M:train(opt, updates)
                             bind(validBatch, self, opt.processor))
       self.valid_loss = self.valid_loss / self.valid_count
       print(string.format('  Validation loss: %.6f', self.valid_loss))
+    end
+
+    if opt.cache_every and epoch % opt.cache_every == 0 and
+       opt.output and opt.output ~= '/dev/null' then
+      self:saveDataParallel(opt.output .. '.cached')
+      torch.save(opt.output .. '.optimState', opt.optimState)
     end
   end
 end
@@ -241,7 +237,7 @@ end
 
 function M:saveDataParallel(filename)
   self.model:clearState()
-  collectgarbage()
+
   if torch.type(self.model) == 'nn.DataParallelTable' then
     torch.save(filename, cleanDPT(self.model, self.gpu[1]))
   elseif torch.type(self.model) == 'nn.Sequential' then

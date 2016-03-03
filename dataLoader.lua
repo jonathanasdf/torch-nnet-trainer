@@ -137,6 +137,7 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, resultHandler)
 
     threads:addjob(
       function(preprocessor)
+        collectgarbage()
         local inputs = {}
         for j=1,#paths do
           table.insert(inputs, preprocessor(image.load(paths[j], 3, 'float')))
