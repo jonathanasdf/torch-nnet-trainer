@@ -20,11 +20,6 @@ local initcheck = argcheck{
    type='function',
    help='applied to image (ex: jittering). It takes the image as input',
    opt = true},
-
-  {name='verbose',
-   type='boolean',
-   help='Verbose mode during initialization',
-   default = false},
 }
 
 local dataLoader = torch.class('DataLoader')
@@ -95,21 +90,21 @@ function DataLoader:sample(quantity)
   return self:retrieve(indices)
 end
 
-function DataLoader:get(i1, i2)
+function DataLoader:get(start, end_incl)
   local indices
-  if type(i1) == 'number' then
-    if type(i2) == 'number' then -- range of indices
-      i2 = math.min(i2, self:size())
-      indices = torch.range(i1, i2);
+  if type(start) == 'number' then
+    if type(end_incl) == 'number' then -- range of indices
+      end_incl = math.min(end_incl, self:size())
+      indices = torch.range(start, end_incl);
     else -- single index
-      indices = {i1}
+      indices = {start}
     end
-  elseif type(i1) == 'table' then
-    indices = i1 -- table
-  elseif (type(i1) == 'userdata' and i1:nDimension() == 1) then
-    indices = i1 -- tensor
+  elseif type(start) == 'table' then
+    indices = start -- table
+  elseif (type(start) == 'userdata' and start:nDimension() == 1) then
+    indices = start -- tensor
   else
-    error('Unsupported input types: ' .. type(i1) .. ' ' .. type(i2))
+    error('Unsupported input types: ' .. type(start) .. ' ' .. type(end_incl))
   end
   return self:retrieve(indices)
 end
@@ -124,7 +119,8 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, resultHandler)
   end
   epochSize = math.min(epochSize, math.ceil(self:size() * 1.0 / batchSize))
 
-  setJobs(epochSize)
+  local jobsDone = 0
+  xlua.progress(jobsDone, epochSize)
   for i=1,epochSize do
     local paths
     if shuffle then
@@ -142,10 +138,12 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, resultHandler)
         for j=1,#paths do
           table.insert(inputs, preprocessor(image.load(paths[j], 3, 'float')))
         end
-        return imageTableToTensor(inputs)
+        return tableToBatchTensor(inputs)
       end,
       function(inputs)
         resultHandler(paths, inputs)
+        jobsDone = jobsDone + 1
+        xlua.progress(jobsDone, epochSize)
       end,
       self.preprocessor
     )

@@ -3,16 +3,14 @@ function defineBaseOptions(cmd)
     '-processor',
     'REQUIRED. lua file that preprocesses input and handles output. '
     .. 'Functions that can be defined:\n'
-    .. '    -setOptions(opt): Passes command line options to the processor\n'
     .. '    -preprocess(img): takes a single img and prepares it for the network\n'
-    .. '    -processBatch(paths, outputs): returns [loss, grad_outputs]\n'
+    .. '    -processBatch(paths, outputs, calculateStats): returns [loss, grad_outputs]\n'
   )
   cmd:option('-processor_opts', '', 'additional options for the processor')
-  cmd:option('-nThreads', 8, 'number of threads')
-  cmd:option('-gpu', '', 'comma separated list of GPUs to use')
-  cmd:option('-nGPU', 4, 'number of GPU to use. Ignored if gpu is set')
   cmd:option('-batchSize', 32, 'batch size')
-  cmd:option('-cache_every', 20, 'save model every n epochs')
+  cmd:option('-nThreads', 8, 'number of threads')
+  cmd:option('-nGPU', 4, 'number of GPU to use. Set to 0 to use CPU')
+  cmd:option('-gpu', '', 'comma separated list of GPUs to use. overrides nGPU if set')
 end
 
 function defineTrainingOptions(cmd)
@@ -20,6 +18,7 @@ function defineTrainingOptions(cmd)
   cmd:option('-momentum', 0.9, 'momentum')
   cmd:option('-epochs', 50, 'num epochs')
   cmd:option('-epochSize', -1, 'num batches per epochs')
+  cmd:option('-cache_every', 20, 'save model every n epochs')
   cmd:option('-val', '', 'validation data')
   cmd:option('-valSize', -1, 'num batches to validate')
   cmd:option('-val_every', 20, 'run validation every n epochs')
@@ -28,10 +27,14 @@ end
 
 function processArgs(cmd)
   local opt = cmd:parse(arg or {})
-  if opt.processor == '' then
-    error('A processor must be supplied.')
+
+  gpu = opt.gpu:split(',')
+  if tablelength(gpu) == 0 then
+    for i=1, opt.nGPU do
+      table.insert(gpu, i)
+    end
   end
-  opt.processor = dofile(opt.processor).new(opt)
+  nGPU = tablelength(gpu)
 
   local Threads = require 'threads'
   Threads.serialization('threads.sharedserialize')
@@ -50,18 +53,12 @@ function processArgs(cmd)
     end
   )
 
+  if opt.processor == '' then
+    error('A processor must be supplied.')
+  end
+  opt.processor = dofile(opt.processor).new(opt)
+
   return opt
-end
-
-function setJobs(n)
-  numJobs = n
-  jobsDone = 0
-  xlua.progress(jobsDone, numJobs)
-end
-
-function jobDone()
-  jobsDone = jobsDone + 1
-  xlua.progress(jobsDone, numJobs)
 end
 
 function tablelength(T)
@@ -70,9 +67,11 @@ function tablelength(T)
   return count
 end
 
-function imageTableToTensor(T) -- Assumes 3 channels
+function tableToBatchTensor(T) -- Assumes 3 dimensions
   for k, v in pairs(T) do
-    T[k] = v:reshape(1, v:size(1), v:size(2), v:size(3))
+    local sz = torch.totable(v:size())
+    table.insert(sz, 1, 1)
+    T[k] = v:view(torch.LongStorage(sz))
   end
   return torch.cat(T, 1)
 end

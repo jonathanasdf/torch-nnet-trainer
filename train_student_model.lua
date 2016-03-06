@@ -17,35 +17,43 @@ defineBaseOptions(cmd)     --defined in utils.lua
 defineTrainingOptions(cmd) --defined in train.lua
 cmd:option('-T', 4, 'temperature')
 
-local opt = processArgs(cmd) 
+local opt = processArgs(cmd)
 assert(paths.filep(opt.teacher), 'Cannot find teacher model ' .. opt.teacher)
 assert(paths.filep(opt.student), 'Cannot find student model ' .. opt.student)
 
-local teacher = Model{gpu=opt.gpu, nGPU=opt.nGPU}:load(opt.teacher)
-if #teacher.model:findModules('cudnn.SoftMax') ~= 0 or 
+local teacher = Model(opt.teacher)
+if #teacher.model:findModules('cudnn.SoftMax') ~= 0 or
    #teacher.model:findModules('nn.SoftMax') ~= 0 then
   teacher.model:remove()
 end
 
-local student = Model{gpu=opt.gpu, nGPU=opt.nGPU}:load(opt.student)
-if #student.model:findModules('cudnn.SoftMax') ~= 0 or 
+local student = Model(opt.student)
+local hasSoftmax = false
+if #student.model:findModules('cudnn.SoftMax') ~= 0 or
    #student.model:findModules('nn.SoftMax') ~= 0 then
-  student.model:remove()
+  hasSoftmax = true
 end
 
 local criterion = SoftCrossEntropyCriterion(opt.T)
-if opt.nGPU > 0 then
+if nGPU > 0 then
   criterion = criterion:cuda()
 end
 
 local function updates(teacher, student, paths, inputs)
   local logits = teacher:forward(inputs, true)
   local student_logits = student:forward(inputs)
+  if hasSoftmax then
+    student_logits = student.model.modules[#student.model.modules-1].output
+  end
   local loss = criterion:forward(student_logits, logits)
   local grad_outputs = criterion:backward(student_logits, logits)
 
   student:zeroGradParameters()
-  student:backward(inputs, grad_outputs)
+  if hasSoftmax then
+    student.model.modules[#student.model.modules-1]:backward(inputs, grad_outputs)
+  else
+    student:backward(inputs, grad_outputs)
+  end
 
   return function(x)
     return loss, student.gradParameters
@@ -53,9 +61,4 @@ local function updates(teacher, student, paths, inputs)
 end
 
 student:train(opt, bind(updates, teacher))
-if student.model.backend == 'cudnn' then
-  student.model:add(cudnn.SoftMax())
-else
-  student.model:add(nn.SoftMax())
-end
-student:saveDataParallel(opt.output)
+student:save(opt.output)

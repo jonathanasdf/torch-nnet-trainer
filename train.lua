@@ -14,13 +14,13 @@ cmd:argument('-output', 'path to save trained model')
 --defined in utils.lua
 defineBaseOptions(cmd)
 defineTrainingOptions(cmd)
--- Additional processor functions: 
+-- Additional processor functions:
 --   -updates(model, paths, inputs): custom updates function for optim
 
-local opt = processArgs(cmd) 
+local opt = processArgs(cmd)
 assert(paths.filep(opt.model), 'Cannot find model ' .. opt.model)
 
-local model = Model{gpu=opt.gpu, nGPU=opt.nGPU}:load(opt.model)
+local model = Model(opt.model)
 
 local function updates(processor, model, paths, inputs)
   local loss, grad_outputs = processor:processBatch(paths, model:forward(inputs))
@@ -32,4 +32,4 @@ local function updates(processor, model, paths, inputs)
 end
 
 model:train(opt, opt.processor.updates or bind(updates, opt.processor))
-model:saveDataParallel(opt.output)
+model:save(opt.output)

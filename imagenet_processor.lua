@@ -21,13 +21,13 @@ function M:__init(opt)
 
   self.criterion = nn.TrueNLLCriterion()
   self.criterion.sizeAverage = false
-  if self.opt.nGPU > 0 then
+  if nGPU > 0 then
     self.criterion = self.criterion:cuda()
   end
 end
 
 function M.preprocess(img)
-  -- find the smaller dimension, and resize it to 256 
+  -- find the smaller dimension, and resize it to 256
   if img:size(3) < img:size(2) then
      img = image.scale(img, 256, 256 * img:size(2) / img:size(3))
   else
@@ -66,7 +66,7 @@ function M:processBatch(pathNames, outputs, calculateStats)
     end
 
     if calculateStats then
-      local prob, classes = (#pathNames == 1 and outputs or outputs[i]):view(-1):sort(true) 
+      local prob, classes = (#pathNames == 1 and outputs or outputs[i]):view(-1):sort(true)
       local result = 'predicted classes for ' .. paths.basename(name) .. ': '
       for j=1,5 do
         local color = ''
@@ -79,12 +79,12 @@ function M:processBatch(pathNames, outputs, calculateStats)
       end
       result = result .. '\27[36mground truth: ' .. self.words[labels[i]] .. '\27[0m'
       --print(result)
-    
+
       total = total + 1
     end
   end
 
-  if self.opt.nGPU > 0 then
+  if nGPU > 0 then
     labels = labels:cuda()
   end
   local loss = self.criterion:forward(outputs, labels)
