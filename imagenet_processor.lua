@@ -1,7 +1,6 @@
+require 'fbnn'
 require 'image'
 require 'paths'
-require 'nn'
-require 'fbnn'
 local class = require 'class'
 local Processor = require 'processor'
 
@@ -13,10 +12,15 @@ function M:__init(opt)
   self.words = {}
   self.lookup = {}
   local n = 1
-  for line in io.lines'/file/jshen/data/ILSVRC2012_devkit_t12/words.txt' do
+  for line in io.lines('/file/imagenet/ILSVRC2012_devkit_t12/words.txt') do
     table.insert(self.words, string.sub(line,11))
     self.lookup[string.sub(line, 1, 9)] = n
     n = n + 1
+  end
+
+  self.val = {}
+  for line in io.lines('/file/imagenet/ILSVRC2012_devkit_t12/data/WNID_validation_ground_truth.txt') do
+    table.insert(self.val, self.lookup[line])
   end
 
   self.criterion = nn.TrueNLLCriterion()
@@ -55,29 +59,30 @@ function M:processBatch(pathNames, outputs, calculateStats)
   local labels = torch.Tensor(#pathNames)
   for i=1,#pathNames do
     local name = pathNames[i]
+    local filename = paths.basename(name)
+    local label = -1
     if name:find('train') then
-      labels[i] = self.lookup[string.sub(paths.basename(name), 1, 9)]
+      label = self.lookup[string.sub(filename, 1, 9)]
     elseif name:find('val') then
-      local cmd = 'grep -Po "n\\d{8}" /file/jshen/data/ILSVRC2012_bbox_val/' .. paths.basename(name, '.JPEG') .. '.xml'
-      local f = assert(io.popen(cmd, 'r'))
-      local s = assert(f:read())
-      f:close()
-      labels[i] = self.lookup[s]
+      label = self.val[tonumber(string.sub(filename, -12, -5))]
     end
+    labels[i] = label
 
     if calculateStats then
       local prob, classes = (#pathNames == 1 and outputs or outputs[i]):view(-1):sort(true)
-      local result = 'predicted classes for ' .. paths.basename(name) .. ': '
+      local result = 'predicted classes for ' .. filename .. ': '
       for j=1,5 do
         local color = ''
-        if classes[j] == labels[i] then
+        if classes[j] == label then
           if j == 1 then top1 = top1 + 1 end
           top5 = top5 + 1
           color = '\27[33m'
         end
         result = result .. color .. '(' .. math.floor(prob[j]*100 + 0.5) .. '%) ' .. self.words[classes[j]] .. '\27[0m; '
       end
-      result = result .. '\27[36mground truth: ' .. self.words[labels[i]] .. '\27[0m'
+      if label ~= -1 then
+        result = result .. '\27[36mground truth: ' .. self.words[label] .. '\27[0m'
+      end
       --print(result)
 
       total = total + 1

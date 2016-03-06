@@ -1,11 +1,10 @@
+require 'image'
 require 'paths'
 require 'xlua'
-require 'image'
-require 'cutorch'
-require 'utils'
-local ffi = require 'ffi'
-local argcheck = require 'argcheck'
 
+require 'utils'
+
+local argcheck = require 'argcheck'
 local initcheck = argcheck{
   pack=true,
   help=[[
@@ -121,6 +120,22 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, resultHandler)
 
   local jobsDone = 0
   xlua.progress(jobsDone, epochSize)
+
+  local runFn = function(paths, preprocessor)
+    collectgarbage()
+    local inputs = {}
+    for j=1,#paths do
+      table.insert(inputs, preprocessor(image.load(paths[j], 3, 'float')))
+    end
+    return paths, tableToBatchTensor(inputs)
+  end
+
+  local doneFn = function(paths, inputs)
+    resultHandler(paths, inputs)
+    jobsDone = jobsDone + 1
+    xlua.progress(jobsDone, epochSize)
+  end
+
   for i=1,epochSize do
     local paths
     if shuffle then
@@ -130,23 +145,7 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, resultHandler)
       local indexEnd = (indexStart + batchSize - 1)
       paths = self:get(indexStart, indexEnd)
     end
-
-    threads:addjob(
-      function(preprocessor)
-        collectgarbage()
-        local inputs = {}
-        for j=1,#paths do
-          table.insert(inputs, preprocessor(image.load(paths[j], 3, 'float')))
-        end
-        return tableToBatchTensor(inputs)
-      end,
-      function(inputs)
-        resultHandler(paths, inputs)
-        jobsDone = jobsDone + 1
-        xlua.progress(jobsDone, epochSize)
-      end,
-      self.preprocessor
-    )
+    threads:addjob(runFn, doneFn, paths, self.preprocessor)
   end
   threads:synchronize()
 end

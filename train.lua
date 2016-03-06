@@ -22,8 +22,8 @@ assert(paths.filep(opt.model), 'Cannot find model ' .. opt.model)
 
 local model = Model(opt.model)
 
-local function updates(processor, model, paths, inputs)
-  local loss, grad_outputs = processor:processBatch(paths, model:forward(inputs))
+local function updates(model, paths, inputs)
+  local loss, grad_outputs = opt.processor:processBatch(paths, model:forward(inputs))
   model:zeroGradParameters()
   model:backward(inputs, grad_outputs)
   return function(x)
@@ -31,5 +31,5 @@ local function updates(processor, model, paths, inputs)
   end
 end
 
-model:train(opt, opt.processor.updates or bind(updates, opt.processor))
+model:train(opt, opt.processor.updates or updates)
 model:save(opt.output)

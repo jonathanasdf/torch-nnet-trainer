@@ -105,6 +105,8 @@ function M:train(opt, updates)
     }
   end
 
+  local trainFn = bind(trainBatch, self, updates, opt.optimState)
+  local valFn = bind(validBatch, self, opt.processor)
   for epoch=1,opt.epochs do
     print('==> training epoch # ' .. epoch)
     local batchNumber = 0
@@ -112,7 +114,7 @@ function M:train(opt, updates)
     train_loader:runAsync(opt.batchSize,
                           opt.epochSize,
                           true, --shuffle
-                          bind(trainBatch, self, updates, opt.optimState))
+                          trainFn)
 
     if opt.val_every and epoch % opt.val_every == 0 and opt.val ~= '' then
       self.valid_count = 0
@@ -120,7 +122,7 @@ function M:train(opt, updates)
       valid_loader:runAsync(opt.batchSize,
                             opt.valSize,
                             false, --don't shuffle
-                            bind(validBatch, self, opt.processor))
+                            valFn)
       self.valid_loss = self.valid_loss / self.valid_count
       print(string.format('  Validation loss: %.6f', self.valid_loss))
     end

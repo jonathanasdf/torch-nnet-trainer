@@ -15,7 +15,8 @@ cmd:argument('-input', 'input file or folder')
 cmd:argument('-output', 'path to save trained student model')
 defineBaseOptions(cmd)     --defined in utils.lua
 defineTrainingOptions(cmd) --defined in train.lua
-cmd:option('-T', 4, 'temperature')
+cmd:option('-T', 2, 'temperature')
+cmd:option('-lambda', 0.5, 'hard target relative weight')
 
 local opt = processArgs(cmd)
 assert(paths.filep(opt.teacher), 'Cannot find teacher model ' .. opt.teacher)
@@ -39,26 +40,31 @@ if nGPU > 0 then
   criterion = criterion:cuda()
 end
 
-local function updates(teacher, student, paths, inputs)
+local function updates(student, paths, inputs)
   local logits = teacher:forward(inputs, true)
-  local student_logits = student:forward(inputs)
+  local student_outputs = student:forward(inputs)
+  local student_logits = student_outputs
   if hasSoftmax then
     student_logits = student.model.modules[#student.model.modules-1].output
   end
-  local loss = criterion:forward(student_logits, logits)
-  local grad_outputs = criterion:backward(student_logits, logits)
+
+  local soft_loss = criterion:forward(student_logits, logits)
+  local soft_grad_outputs = criterion:backward(student_logits, logits)*opt.T*opt.T
 
   student:zeroGradParameters()
   if hasSoftmax then
-    student.model.modules[#student.model.modules-1]:backward(inputs, grad_outputs)
+    student.model.modules[#student.model.modules-1]:backward(inputs, soft_grad_outputs)
   else
-    student:backward(inputs, grad_outputs)
+    student:backward(inputs, soft_grad_outputs)
   end
 
+  local hard_loss, hard_grad_outputs = opt.processor:processBatch(paths, student_outputs)
+  student:backward(inputs, hard_grad_outputs*opt.lambda)
+
   return function(x)
-    return loss, student.gradParameters
+    return soft_loss + hard_loss, student.gradParameters
   end
 end
 
-student:train(opt, bind(updates, teacher))
+student:train(opt, updates)
 student:save(opt.output)
