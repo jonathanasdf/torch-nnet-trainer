@@ -21,27 +21,27 @@ function defineTrainingOptions(cmd)
   cmd:option('-val', '', 'validation data')
   cmd:option('-valSize', -1, 'num batches to validate')
   cmd:option('-val_every', 20, 'run validation every n epochs')
+  cmd:option('-noUseDataParallelTable', false, 'dont use DataParallelTable in model')
   cmd:option('-optimState', '', 'optimState to resume from')
 end
 
 function processArgs(cmd)
   local opt = cmd:parse(arg or {})
   nGPU = opt.nGPU
+  noUseDataParallelTable = opt.noUseDataParallelTable
 
   local Threads = require 'threads'
   Threads.serialization('threads.sharedserialize')
   threads = Threads(
     opt.nThreads,
     function()
-      require 'torch'
-      require 'cutorch'
+      torch.setdefaulttensortype('torch.FloatTensor')
       require 'cunn'
       require 'cudnn'
       require 'fbnn'
       require 'image'
       require 'paths'
       require 'utils'
-      torch.setdefaulttensortype('torch.FloatTensor')
     end
   )
 

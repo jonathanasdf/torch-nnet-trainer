@@ -24,6 +24,7 @@ function M:__init(opt)
   self.criterion = nn.TrueNLLCriterion()
   self.criterion.sizeAverage = false
   if nGPU > 0 then
+    require 'cutorch'
     self.criterion = self.criterion:cuda()
   end
 end

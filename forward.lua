@@ -1,7 +1,6 @@
 package.path = package.path .. ';/home/jshen/scripts/?.lua'
 torch.setdefaulttensortype('torch.FloatTensor')
 
-require 'cutorch'
 require 'model'
 require 'dataLoader'
 

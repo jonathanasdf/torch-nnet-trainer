@@ -1,9 +1,8 @@
 package.path = package.path .. ';/home/jshen/scripts/?.lua'
 torch.setdefaulttensortype('torch.FloatTensor')
 
-require 'cutorch'
-require 'cudnn'
 require 'model'
+require 'nn'
 require 'paths'
 require 'utils'
 require 'SoftCrossEntropyCriterion'

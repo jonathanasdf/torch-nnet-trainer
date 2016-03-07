@@ -6,12 +6,11 @@
 --  LICENSE file in the root directory of this source tree. An additional grant
 --  of patent rights can be found in the PATENTS file in the same directory.
 --
-require 'torch'
-require 'cutorch'
 require 'cunn'
 require 'cudnn'
 require 'optim'
 require 'paths'
+
 require 'dataLoader'
 require 'utils'
 
@@ -19,13 +18,10 @@ local M = torch.class('Model')
 local loadDataParallel
 
 function M:__init(path)
-  if nGPU > 0 then
-    cutorch.setDevice(1)
-  end
-
   if nGPU == 0 then
     self.backend = 'nn'
   else
+    cutorch.setDevice(1)
     self.backend = 'cudnn'
   end
 
@@ -159,20 +155,22 @@ end
 
 
 function makeDataParallel(model)
-  if nGPU > 1 then
+  if not(noUseDataParallelTable) and nGPU > 1 then
     print('converting model to nn.DataParallelTable')
+    local gpu = {}
+    for g = 1,nGPU do
+      table.insert(gpu, g)
+    end
     local model_single = model
     model = nn.DataParallelTable(1)
-    for g in 1,nGPU do
-      cutorch.setDevice(g)
-      model:add(model_single:clone(), g)
-    end
-    cutorch.setDevice(1)
+    model:add(model_single:clone(), gpu)
   end
   return model
 end
 
 function loadDataParallel(filename, backend)
+  nn.DataParallelTable.deserializeNGPUs = nGPU
+
   local model
   if paths.extname(filename) == 'caffemodel' then
     require 'loadcaffe'
@@ -181,13 +179,12 @@ function loadDataParallel(filename, backend)
     model = torch.load(filename)
   end
 
-  nn.DataParallelTable.deserializeNGPUs = nGPU
   if torch.type(model) == 'nn.DataParallelTable' then
-    return makeDataParallel(model:get(1))
+    return makeDataParallel(model:get())
   elseif torch.type(model) == 'nn.Sequential' then
     for i,module in ipairs(model.modules) do
       if torch.type(module) == 'nn.DataParallelTable' then
-        model.modules[i] = makeDataParallel(module:get(1))
+        model.modules[i] = makeDataParallel(module:get())
       end
     end
     return model
@@ -201,14 +198,13 @@ local function cleanDPT(module)
   -- module.modules are clones of the same network on different GPUs
   -- hence we only need to keep one when saving the model to the disk.
   local newDPT = nn.DataParallelTable(1)
-  newDPT:add(module:get(1), 1)
+  newDPT:add(module:get(), 1)
   return newDPT
 end
 
 function M:save(filename)
   self.model:clearState()
 
-  cutorch.setDevice(1)
   if torch.type(self.model) == 'nn.DataParallelTable' then
     torch.save(filename, cleanDPT(self.model))
   elseif torch.type(self.model) == 'nn.Sequential' then
