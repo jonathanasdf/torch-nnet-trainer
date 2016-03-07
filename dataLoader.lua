@@ -125,7 +125,7 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, resultHandler)
     collectgarbage()
     local inputs = {}
     for j=1,#paths do
-      table.insert(inputs, preprocessor(image.load(paths[j], 3, 'float')))
+      table.insert(inputs, preprocessor(paths[j]))
     end
     return paths, tableToBatchTensor(inputs)
   end

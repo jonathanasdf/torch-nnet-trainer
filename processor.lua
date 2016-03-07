@@ -1,4 +1,7 @@
 local class = require 'class'
+require 'image'
+require 'paths'
+
 local M = class('Processor')
 
 M.cmd = torch.CmdLine()
@@ -14,8 +17,8 @@ function M:__init(opt)
   end
 end
 
-function M.preprocess(img)
-  return img
+function M.preprocess(path)
+  return image.load(path, 3)
 end
 
 function M:processBatch(paths, outputs, calculateStats)

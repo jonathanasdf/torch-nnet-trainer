@@ -1,7 +1,5 @@
-require 'fbnn'
-require 'image'
-require 'paths'
 local class = require 'class'
+require 'fbnn'
 local Processor = require 'processor'
 
 local M = class('ImageNetProcessor', 'Processor')
@@ -30,7 +28,9 @@ function M:__init(opt)
   end
 end
 
-function M.preprocess(img)
+function M.preprocess(path)
+  local img = image.load(path, 3)
+
   -- find the smaller dimension, and resize it to 256
   if img:size(3) < img:size(2) then
      img = image.scale(img, 256, 256 * img:size(2) / img:size(3))

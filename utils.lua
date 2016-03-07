@@ -10,7 +10,6 @@ function defineBaseOptions(cmd)
   cmd:option('-batchSize', 32, 'batch size')
   cmd:option('-nThreads', 8, 'number of threads')
   cmd:option('-nGPU', 4, 'number of GPU to use. Set to 0 to use CPU')
-  cmd:option('-gpu', '', 'comma separated list of GPUs to use. overrides nGPU if set')
 end
 
 function defineTrainingOptions(cmd)
@@ -27,14 +26,7 @@ end
 
 function processArgs(cmd)
   local opt = cmd:parse(arg or {})
-
-  gpu = opt.gpu:split(',')
-  if tablelength(gpu) == 0 then
-    for i=1, opt.nGPU do
-      table.insert(gpu, i)
-    end
-  end
-  nGPU = tablelength(gpu)
+  nGPU = opt.nGPU
 
   local Threads = require 'threads'
   Threads.serialization('threads.sharedserialize')
@@ -74,6 +66,27 @@ function tableToBatchTensor(T) -- Assumes 3 dimensions
     T[k] = v:view(torch.LongStorage(sz))
   end
   return torch.cat(T, 1)
+end
+
+local RGB_BGR = torch.LongTensor{3,2,1}
+function tensorToCVImg(T)
+  if T:dim() == 2 then
+    return (T*255):byte()
+  elseif T:dim() == 3 then
+    return (T:index(1, RGB_BGR):permute(2, 3, 1)*255):byte()
+  else
+    error('2d or 3d tensor expected')
+  end
+end
+
+function cvImgToTensor(I)
+  if I:dim() == 2 then
+    return I:float() / 255.0
+  elseif I:dim() == 3 then
+    return I:index(3, RGB_BGR):permute(3, 1, 2):float() / 255.0
+  else
+    error('2d or 3d image expected')
+  end
 end
 
 function string:split(sep)
