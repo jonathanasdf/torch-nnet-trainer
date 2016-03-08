@@ -22,7 +22,6 @@ local model = Model(opt.model)
 
 local function updates(model, paths, inputs)
   local loss, grad_outputs = opt.processor:processBatch(paths, model:forward(inputs))
-  model:zeroGradParameters()
   model:backward(inputs, grad_outputs)
   return function(x)
     return loss, model.gradParameters

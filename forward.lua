@@ -24,8 +24,8 @@ DataLoader{
   path = opt.input,
   preprocessor = opt.processor.preprocess
 }:runAsync(opt.batchSize,
-           -1,          -- epochSize
-           false,       -- don't shuffle,
-           testBatch)   -- resultHandler
+           opt.epochSize,
+           true,          -- shuffle,
+           testBatch)     -- resultHandler
 
 opt.processor:printStats()

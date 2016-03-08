@@ -8,6 +8,7 @@ function defineBaseOptions(cmd)
   )
   cmd:option('-processor_opts', '', 'additional options for the processor')
   cmd:option('-batchSize', 32, 'batch size')
+  cmd:option('-epochSize', -1, 'num batches per epochs. -1 means run all available data once')
   cmd:option('-nThreads', 8, 'number of threads')
   cmd:option('-nGPU', 4, 'number of GPU to use. Set to 0 to use CPU')
 end
@@ -16,10 +17,10 @@ function defineTrainingOptions(cmd)
   cmd:option('-LR', 0.001, 'learning rate')
   cmd:option('-momentum', 0.9, 'momentum')
   cmd:option('-epochs', 50, 'num epochs')
-  cmd:option('-epochSize', -1, 'num batches per epochs')
-  cmd:option('-cache_every', 20, 'save model every n epochs')
+  cmd:option('-update_every', 1, 'update model with sgd every n batches')
+  cmd:option('-cache_every', 20, 'save model every n epochs. Set to -1 or a value >epochs to disable')
   cmd:option('-val', '', 'validation data')
-  cmd:option('-valSize', -1, 'num batches to validate')
+  cmd:option('-valSize', -1, 'num batches to validate. -1 means run all available data once')
   cmd:option('-val_every', 20, 'run validation every n epochs')
   cmd:option('-noUseDataParallelTable', false, 'dont use DataParallelTable in model')
   cmd:option('-optimState', '', 'optimState to resume from')
@@ -30,6 +31,7 @@ function processArgs(cmd)
   nGPU = opt.nGPU
   noUseDataParallelTable = opt.noUseDataParallelTable
 
+  torch.setnumthreads(opt.nThreads)
   local Threads = require 'threads'
   Threads.serialization('threads.sharedserialize')
   threads = Threads(
@@ -38,6 +40,8 @@ function processArgs(cmd)
       torch.setdefaulttensortype('torch.FloatTensor')
       require 'cunn'
       require 'cudnn'
+      cv = require 'cv'
+      require 'cv.imgcodecs'
       require 'fbnn'
       require 'image'
       require 'paths'

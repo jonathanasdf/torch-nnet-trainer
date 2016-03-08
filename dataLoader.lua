@@ -89,7 +89,7 @@ function DataLoader:sample(quantity)
   return self:retrieve(indices)
 end
 
-function DataLoader:get(start, end_incl)
+function DataLoader:get(start, end_incl, source)
   local indices
   if type(start) == 'number' then
     if type(end_incl) == 'number' then -- range of indices
@@ -104,6 +104,9 @@ function DataLoader:get(start, end_incl)
     indices = start -- tensor
   else
     error('Unsupported input types: ' .. type(start) .. ' ' .. type(end_incl))
+  end
+  if source then
+    indices = source:index(1, indices:long())
   end
   return self:retrieve(indices)
 end
@@ -136,15 +139,14 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, resultHandler)
     xlua.progress(jobsDone, epochSize)
   end
 
+  local perm
+  if shuffle then
+    perm = torch.randperm(self:size())
+  end
   for i=1,epochSize do
-    local paths
-    if shuffle then
-      paths = self:sample(batchSize)
-    else
-      local indexStart = (i-1) * batchSize + 1
-      local indexEnd = (indexStart + batchSize - 1)
-      paths = self:get(indexStart, indexEnd)
-    end
+    local indexStart = (i-1) * batchSize + 1
+    local indexEnd = (indexStart + batchSize - 1)
+    local paths = self:get(indexStart, indexEnd, shuffle and perm or nil)
     threads:addjob(runFn, doneFn, paths, self.preprocessor)
   end
   threads:synchronize()

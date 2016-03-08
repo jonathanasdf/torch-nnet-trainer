@@ -54,11 +54,18 @@ function M:load(path)
   return self
 end
 
-local function trainBatch(model, updates, optimState, paths, inputs)
+local function trainBatch(model, updates, opt, paths, inputs)
   if nGPU > 0 then
     inputs = inputs:cuda()
   end
-  optim.sgd(updates(model, paths, inputs), model.parameters, optimState)
+
+  opt.train_iter = opt.train_iter + 1
+  local feval = updates(model, paths, inputs)
+  if opt.train_iter % opt.update_every == 0 then
+    optim.sgd(feval, model.parameters, opt.optimState)
+    model:zeroGradParameters()
+  end
+
   if model.model.needsSync then
     model.model:syncParameters()
   end
@@ -66,7 +73,7 @@ end
 
 local function validBatch(model, processor, paths, inputs)
   model.valid_loss = model.valid_loss +
-    processor:processBatch(paths, model:forward(inputs, true), true)
+    processor:processBatch(paths, model:forward(inputs, true))
   model.valid_count = model.valid_count + #paths
 end
 
@@ -101,18 +108,19 @@ function M:train(opt, updates)
     }
   end
 
-  local trainFn = bind(trainBatch, self, updates, opt.optimState)
+  self:zeroGradParameters()
+  opt.train_iter = 0
+  local trainFn = bind(trainBatch, self, updates, opt)
   local valFn = bind(validBatch, self, opt.processor)
   for epoch=1,opt.epochs do
     print('==> training epoch # ' .. epoch)
-    local batchNumber = 0
 
     train_loader:runAsync(opt.batchSize,
                           opt.epochSize,
                           true, --shuffle
                           trainFn)
 
-    if opt.val_every and epoch % opt.val_every == 0 and opt.val ~= '' then
+    if opt.val ~= '' and epoch % opt.val_every == 0 then
       self.valid_count = 0
       self.valid_loss = 0
       valid_loader:runAsync(opt.batchSize,
@@ -123,7 +131,7 @@ function M:train(opt, updates)
       print(string.format('  Validation loss: %.6f', self.valid_loss))
     end
 
-    if opt.cache_every and epoch % opt.cache_every == 0 and
+    if opt.cache_every ~= -1 and epoch % opt.cache_every == 0 and
        opt.output and opt.output ~= '/dev/null' then
       self:save(opt.output .. '.cached')
       opt.optimState.dfdx = nil
@@ -155,7 +163,7 @@ end
 
 
 function makeDataParallel(model)
-  if not(noUseDataParallelTable) and nGPU > 1 then
+  if not(noUseDataParallelTable) and nGPU > 0 then
     print('converting model to nn.DataParallelTable')
     local gpu = {}
     for g = 1,nGPU do

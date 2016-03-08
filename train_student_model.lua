@@ -50,7 +50,6 @@ local function updates(student, paths, inputs)
   local soft_loss = criterion:forward(student_logits, logits)
   local soft_grad_outputs = criterion:backward(student_logits, logits)*opt.T*opt.T
 
-  student:zeroGradParameters()
   if hasSoftmax then
     student.model.modules[#student.model.modules-1]:backward(inputs, soft_grad_outputs)
   else
