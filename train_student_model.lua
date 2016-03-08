@@ -14,6 +14,7 @@ cmd:argument('-input', 'input file or folder')
 cmd:argument('-output', 'path to save trained student model')
 defineBaseOptions(cmd)     --defined in utils.lua
 defineTrainingOptions(cmd) --defined in train.lua
+cmd:option('-hintLayer', '', 'which hint layer to use. Defaults to last non-softmax layer')
 cmd:option('-T', 2, 'temperature')
 cmd:option('-lambda', 0.5, 'hard target relative weight')
 
@@ -33,14 +34,18 @@ if #student.model:findModules('cudnn.SoftMax') ~= 0 or
    #student.model:findModules('nn.SoftMax') ~= 0 then
   hasSoftmax = true
 end
+opt.processor.model = student
 
 local criterion = SoftCrossEntropyCriterion(opt.T)
 if nGPU > 0 then
   criterion = criterion:cuda()
 end
 
-local function updates(student, paths, inputs)
+local function updates(student, pathNames, inputs)
   local logits = teacher:forward(inputs, true)
+  if opt.hintLayer ~= '' then
+    logits = findModuleByName(teacher, opt.hintLayer).output
+  end
   local student_outputs = student:forward(inputs)
   local student_logits = student_outputs
   if hasSoftmax then
@@ -56,7 +61,7 @@ local function updates(student, paths, inputs)
     student:backward(inputs, soft_grad_outputs)
   end
 
-  local hard_loss, hard_grad_outputs = opt.processor:processBatch(paths, student_outputs)
+  local hard_loss, hard_grad_outputs = opt.processor:processBatch(pathNames, student_outputs)
   student:backward(inputs, hard_grad_outputs*opt.lambda)
 
   return function(x)

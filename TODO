@@ -1,3 +1,3 @@
 Allow for customization of sgd strategy
-Optimize a bit more to reduce amount of garbage
+Add hard negative mining to train_svm.lua
 Add README and upload to github?

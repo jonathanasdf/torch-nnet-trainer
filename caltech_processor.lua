@@ -2,11 +2,15 @@ local class = require 'class'
 cv = require 'cv'
 require 'cv.imgcodecs'
 require 'fbnn'
+require 'svm'
+
 local Processor = require 'processor'
 
 local M = class('CaltechProcessor', 'Processor')
 
 function M:__init(opt)
+  self.cmd:option('-svm', '', 'SVM to use')
+  self.cmd:option('-layer', 'fc7', 'layer to use as SVM input')
   Processor.__init(self, opt)
 
   self.criterion = nn.TrueNLLCriterion()
@@ -23,29 +27,39 @@ function M.preprocess(path)
   return img - mean_pixel
 end
 
+function M:getLabels(pathNames)
+  local labels = torch.Tensor(#pathNames)
+  for i=1,#pathNames do
+    labels[i] = pathNames[i]:find('neg') and 1 or 2
+  end
+  return labels
+end
+
 local pos_correct = 0
 local neg_correct = 0
 local pos_total = 0
 local neg_total = 0
-function M:processBatch(pathNames, outputs, calculateStats)
-  local labels = torch.Tensor(#pathNames)
-  for i=1,#pathNames do
-    local name = pathNames[i]
-    labels[i] = name:find('neg') and 1 or 2
+function M:processBatch(pathNames, outputs, testPhase)
+  local labels = self:getLabels(pathNames)
 
-    if calculateStats then
-      local prob, classes = (#pathNames == 1 and outputs or outputs[i]):view(-1):sort(true)
-      --local result = 'predicted result for ' .. name .. ': ' .. (classes[1] == 1 and "yes" or "no")
-      --print(result)
+  if testPhase then
+    assert(self.opt.svm ~= '', 'for testing, a trained svm must be used.')
 
+    if not(self.svm_model) then
+      self.svm_model = torch.load(self.opt.svm)
+    end
+    local data = convertTensorToSVMLight(labels, findModuleByName(self.model, self.opt.layer).output)
+    local pred, _, _ = liblinear.predict(data, self.svm_model, '-q')
+
+    for i=1,#pathNames do
       if labels[i] == 2 then
         pos_total = pos_total + 1
-        if classes[1] == labels[i] then
+        if pred[i] == labels[i] then
           pos_correct = pos_correct + 1
         end
       else
         neg_total = neg_total + 1
-        if classes[1] == labels[i] then
+        if pred[i] == labels[i] then
           neg_correct = neg_correct + 1
         end
       end

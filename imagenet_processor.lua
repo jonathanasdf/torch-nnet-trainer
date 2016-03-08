@@ -11,14 +11,14 @@ function M:__init(opt)
   self.lookup = {}
   local n = 1
   for line in io.lines('/file/imagenet/ILSVRC2012_devkit_t12/words.txt') do
-    table.insert(self.words, string.sub(line,11))
+    self.words[#self.words+1] = string.sub(line,11)
     self.lookup[string.sub(line, 1, 9)] = n
     n = n + 1
   end
 
   self.val = {}
   for line in io.lines('/file/imagenet/ILSVRC2012_devkit_t12/data/WNID_validation_ground_truth.txt') do
-    table.insert(self.val, self.lookup[line])
+    self.val[#self.val+1] = self.lookup[line]
   end
 
   self.criterion = nn.TrueNLLCriterion()
@@ -53,36 +53,41 @@ function M.preprocess(path)
   return img
 end
 
-local top1 = 0
-local top5 = 0
-local total = 0
-function M:processBatch(pathNames, outputs, calculateStats)
-  local labels = torch.Tensor(#pathNames)
+function M:getLabels(pathNames)
+  local labels = torch.Tensor(#pathNames):fill(-1)
   for i=1,#pathNames do
     local name = pathNames[i]
     local filename = paths.basename(name)
-    local label = -1
     if name:find('train') then
-      label = self.lookup[string.sub(filename, 1, 9)]
+      labels[i] = self.lookup[string.sub(filename, 1, 9)]
     elseif name:find('val') then
-      label = self.val[tonumber(string.sub(filename, -12, -5))]
+      labels[i] = self.val[tonumber(string.sub(filename, -12, -5))]
     end
-    labels[i] = label
+  end
+  return labels
+end
 
-    if calculateStats then
+local top1 = 0
+local top5 = 0
+local total = 0
+function M:processBatch(pathNames, outputs, testPhase)
+  local labels = self:getLabels(pathNames)
+
+  if testPhase then
+    for i=1,#pathNames do
       local prob, classes = (#pathNames == 1 and outputs or outputs[i]):view(-1):sort(true)
-      local result = 'predicted classes for ' .. filename .. ': '
+      local result = 'predicted classes for ' .. paths.basename(pathNames[i]) .. ': '
       for j=1,5 do
         local color = ''
-        if classes[j] == label then
+        if classes[j] == labels[i] then
           if j == 1 then top1 = top1 + 1 end
           top5 = top5 + 1
           color = '\27[33m'
         end
         result = result .. color .. '(' .. math.floor(prob[j]*100 + 0.5) .. '%) ' .. self.words[classes[j]] .. '\27[0m; '
       end
-      if label ~= -1 then
-        result = result .. '\27[36mground truth: ' .. self.words[label] .. '\27[0m'
+      if labels[i] ~= -1 then
+        result = result .. '\27[36mground truth: ' .. self.words[labels[i]] .. '\27[0m'
       end
       --print(result)
 

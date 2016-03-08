@@ -4,7 +4,7 @@ function defineBaseOptions(cmd)
     'REQUIRED. lua file that preprocesses input and handles output. '
     .. 'Functions that can be defined:\n'
     .. '    -preprocess(img): takes a single img and prepares it for the network\n'
-    .. '    -processBatch(paths, outputs, calculateStats): returns [loss, grad_outputs]\n'
+    .. '    -processBatch(pathNames, outputs, calculateStats): returns [loss, grad_outputs]\n'
   )
   cmd:option('-processor_opts', '', 'additional options for the processor')
   cmd:option('-batchSize', 32, 'batch size')
@@ -22,7 +22,7 @@ function defineTrainingOptions(cmd)
   cmd:option('-val', '', 'validation data')
   cmd:option('-valSize', -1, 'num batches to validate. -1 means run all available data once')
   cmd:option('-val_every', 20, 'run validation every n epochs')
-  cmd:option('-noUseDataParallelTable', false, 'dont use DataParallelTable in model')
+  cmd:option('-noUseDataParallelTable', false, 'dont create model using DataParallelTable (only applies to .lua models)')
   cmd:option('-optimState', '', 'optimState to resume from')
 end
 
@@ -36,6 +36,9 @@ function processArgs(cmd)
   Threads.serialization('threads.sharedserialize')
   threads = Threads(
     opt.nThreads,
+    function()
+      package.path = package.path .. ';/home/jshen/scripts/?.lua'
+    end,
     function()
       torch.setdefaulttensortype('torch.FloatTensor')
       require 'cunn'
@@ -65,7 +68,7 @@ end
 
 function tableToBatchTensor(T) -- Assumes 3 dimensions
   for k, v in pairs(T) do
-    local sz = torch.totable(v:size())
+    local sz = v:size():totable()
     table.insert(sz, 1, 1)
     T[k] = v:view(torch.LongStorage(sz))
   end
@@ -93,6 +96,17 @@ function cvImgToTensor(I)
   end
 end
 
+function convertTensorToSVMLight(labels, tensor, append)
+  assert(tensor:size(1) == labels:nElement())
+  local data = append or {}
+  for i=1,tensor:size(1) do
+    local values = tensor[i]:view(-1):float()
+    local indices = torch.range(1, values:nElement()):int()
+    data[#data+1] = {labels[i], {indices, values}}
+  end
+  return data
+end
+
 function string:split(sep)
   local sep, fields = sep or ',', {}
   local pattern = string.format('([^%s]+)', sep)
@@ -100,7 +114,11 @@ function string:split(sep)
   return fields
 end
 
+local class = require 'class'
 function findModuleByName(model, name)
+  if class.istype(model, 'Model') then
+    return findModuleByName(model.model, name)
+  end
   for i=1,#model.modules do
     if model.modules[i].name == name then
       return model.modules[i]

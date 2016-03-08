@@ -21,8 +21,12 @@ function M.preprocess(path)
   return image.load(path, 3)
 end
 
-function M:processBatch(paths, outputs, calculateStats)
-  error('ProcessBatch is not defined.')
+function M:getLabels(pathNames)
+  error('getLabels is not defined.')
+end
+
+function M:processBatch(pathNames, outputs, testPhase)
+  error('processBatch is not defined.')
 end
 
 function M:printStats() end

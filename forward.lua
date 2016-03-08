@@ -15,9 +15,10 @@ local opt = processArgs(cmd)
 assert(paths.filep(opt.model), 'Cannot find model ' .. opt.model)
 
 local model = Model(opt.model)
+opt.processor.model = model
 
-local function testBatch(paths, inputs)
-  opt.processor:processBatch(paths, model:forward(inputs, true), true)
+local function testBatch(pathNames, inputs)
+  opt.processor:processBatch(pathNames, model:forward(inputs, true), true)
 end
 
 DataLoader{

@@ -51,10 +51,9 @@ function DataLoader:__init(...)
   assert(length > 0, 'Could not find any image file in the given input paths')
 
   self.imagePaths = io.open(imageList)
-  self.lineOffset = {}
-  table.insert(self.lineOffset, self.imagePaths:seek())
+  self.lineOffset = {0}
   for line in self.imagePaths:lines() do
-    table.insert(self.lineOffset, self.imagePaths:seek())
+    self.lineOffset[#self.lineOffset+1] = self.imagePaths:seek()
   end
   table.remove(self.lineOffset)
 
@@ -67,15 +66,14 @@ function DataLoader:size()
 end
 
 function DataLoader:retrieve(indices)
-  local paths = {}
+  local pathNames = {}
   local quantity = type(indices) == 'table' and #indices or indices:nElement()
   for i=1,quantity do
     -- load the sample
     self.imagePaths:seek('set', self.lineOffset[indices[i]])
-    local path = self.imagePaths:read()
-    table.insert(paths, path)
+    pathNames[#pathNames+1] = self.imagePaths:read()
   end
-  return paths
+  return pathNames
 end
 
 -- samples with replacement
@@ -83,8 +81,7 @@ function DataLoader:sample(quantity)
   quantity = quantity or 1
   local indices = {}
   for i=1,quantity do
-    local index = math.ceil(torch.uniform() * self:size())
-    table.insert(indices, index)
+    indices[#indices+1] = math.ceil(torch.uniform() * self:size())
   end
   return self:retrieve(indices)
 end
@@ -124,17 +121,17 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, resultHandler)
   local jobsDone = 0
   xlua.progress(jobsDone, epochSize)
 
-  local runFn = function(paths, preprocessor)
+  local runFn = function(pathNames, preprocessor)
     collectgarbage()
     local inputs = {}
-    for j=1,#paths do
-      table.insert(inputs, preprocessor(paths[j]))
+    for j=1,#pathNames do
+      inputs[#inputs+1] = preprocessor(pathNames[j])
     end
-    return paths, tableToBatchTensor(inputs)
+    return pathNames, tableToBatchTensor(inputs)
   end
 
-  local doneFn = function(paths, inputs)
-    resultHandler(paths, inputs)
+  local doneFn = function(pathNames, inputs)
+    resultHandler(pathNames, inputs)
     jobsDone = jobsDone + 1
     xlua.progress(jobsDone, epochSize)
   end
@@ -146,8 +143,8 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, resultHandler)
   for i=1,epochSize do
     local indexStart = (i-1) * batchSize + 1
     local indexEnd = (indexStart + batchSize - 1)
-    local paths = self:get(indexStart, indexEnd, shuffle and perm or nil)
-    threads:addjob(runFn, doneFn, paths, self.preprocessor)
+    local pathNames = self:get(indexStart, indexEnd, shuffle and perm or nil)
+    threads:addjob(runFn, doneFn, pathNames, self.preprocessor)
   end
   threads:synchronize()
 end

@@ -54,13 +54,13 @@ function M:load(path)
   return self
 end
 
-local function trainBatch(model, updates, opt, paths, inputs)
+local function trainBatch(model, updates, opt, pathNames, inputs)
   if nGPU > 0 then
     inputs = inputs:cuda()
   end
 
   opt.train_iter = opt.train_iter + 1
-  local feval = updates(model, paths, inputs)
+  local feval = updates(model, pathNames, inputs)
   if opt.train_iter % opt.update_every == 0 then
     optim.sgd(feval, model.parameters, opt.optimState)
     model:zeroGradParameters()
@@ -71,10 +71,10 @@ local function trainBatch(model, updates, opt, paths, inputs)
   end
 end
 
-local function validBatch(model, processor, paths, inputs)
+local function validBatch(model, processor, pathNames, inputs)
   model.valid_loss = model.valid_loss +
-    processor:processBatch(paths, model:forward(inputs, true))
-  model.valid_count = model.valid_count + #paths
+    processor:processBatch(pathNames, model:forward(inputs, true))
+  model.valid_count = model.valid_count + #pathNames
 end
 
 function M:train(opt, updates)
@@ -165,10 +165,7 @@ end
 function makeDataParallel(model)
   if not(noUseDataParallelTable) and nGPU > 0 then
     print('converting model to nn.DataParallelTable')
-    local gpu = {}
-    for g = 1,nGPU do
-      table.insert(gpu, g)
-    end
+    local gpu = torch.range(1, nGPU):totable()
     local model_single = model
     model = nn.DataParallelTable(1)
     model:add(model_single:clone(), gpu)
