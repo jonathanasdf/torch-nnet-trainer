@@ -25,10 +25,21 @@ function M:getLabels(pathNames)
   error('getLabels is not defined.')
 end
 
-function M:processBatch(pathNames, outputs, testPhase)
-  error('processBatch is not defined.')
+function M:evaluateBatch(pathNames, outputs)
+  if not(self.criterion) then
+    error('self.criterion is not defined. Either define a criterion or a custom evaluateBatch.')
+  end
+  local labels = self:getLabels(pathNames)
+  if nGPU > 0 then
+    labels = labels:cuda()
+  end
+  local loss = self.criterion:forward(outputs, labels) / self.opt.batchCount
+  --Assumes criterion has sizeAverage = false
+  local grad_outputs = self.criterion:backward(outputs, labels) / self.opt.batchCount
+  return loss, grad_outputs
 end
 
+function M:testBatch(pathNames, outputs) end
 function M:printStats() end
 
 return M

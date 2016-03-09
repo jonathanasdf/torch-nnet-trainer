@@ -4,8 +4,11 @@ local Processor = require 'processor'
 
 local M = class('ImageNetProcessor', 'Processor')
 
+local cropSize
 function M:__init(opt)
+  self.cmd:option('-cropSize', 224, 'What size to crop to.')
   Processor.__init(self, opt)
+  cropSize = self.opt.cropSize
 
   self.words = {}
   self.lookup = {}
@@ -39,12 +42,11 @@ function M.preprocess(path)
      img = image.scale(img, 256 * img:size(3) / img:size(2), 256)
   end
 
-  local p = 224
   local iW = img:size(3)
   local iH = img:size(2)
-  local w1 = math.ceil((iW-p)/2)
-  local h1 = math.ceil((iH-p)/2)
-  img = image.crop(img, w1, h1, w1+p, h1+p) -- center patch
+  local w1 = math.ceil((iW-cropSize)/2)
+  local h1 = math.ceil((iH-cropSize)/2)
+  img = image.crop(img, w1, h1, w1+cropSize, h1+cropSize) -- center patch
   local mean_pixel = torch.FloatTensor({103.939, 116.779, 123.68})
   local perm = torch.LongTensor{3, 2, 1}
   img = img:index(1, perm):mul(255.0)
@@ -70,37 +72,28 @@ end
 local top1 = 0
 local top5 = 0
 local total = 0
-function M:processBatch(pathNames, outputs, testPhase)
+function M:testBatch(pathNames, outputs)
   local labels = self:getLabels(pathNames)
 
-  if testPhase then
-    for i=1,#pathNames do
-      local prob, classes = (#pathNames == 1 and outputs or outputs[i]):view(-1):sort(true)
-      local result = 'predicted classes for ' .. paths.basename(pathNames[i]) .. ': '
-      for j=1,5 do
-        local color = ''
-        if classes[j] == labels[i] then
-          if j == 1 then top1 = top1 + 1 end
-          top5 = top5 + 1
-          color = '\27[33m'
-        end
-        result = result .. color .. '(' .. math.floor(prob[j]*100 + 0.5) .. '%) ' .. self.words[classes[j]] .. '\27[0m; '
+  for i=1,#pathNames do
+    local prob, classes = (#pathNames == 1 and outputs or outputs[i]):view(-1):sort(true)
+    local result = 'predicted classes for ' .. paths.basename(pathNames[i]) .. ': '
+    for j=1,5 do
+      local color = ''
+      if classes[j] == labels[i] then
+        if j == 1 then top1 = top1 + 1 end
+        top5 = top5 + 1
+        color = '\27[33m'
       end
-      if labels[i] ~= -1 then
-        result = result .. '\27[36mground truth: ' .. self.words[labels[i]] .. '\27[0m'
-      end
-      --print(result)
-
-      total = total + 1
+      result = result .. color .. '(' .. math.floor(prob[j]*100 + 0.5) .. '%) ' .. self.words[classes[j]] .. '\27[0m; '
     end
-  end
+    if labels[i] ~= -1 then
+      result = result .. '\27[36mground truth: ' .. self.words[labels[i]] .. '\27[0m'
+    end
+    --print(result)
 
-  if nGPU > 0 then
-    labels = labels:cuda()
+    total = total + 1
   end
-  local loss = self.criterion:forward(outputs, labels)
-  local grad_outputs = self.criterion:backward(outputs, labels)
-  return loss, grad_outputs
 end
 
 function M:printStats()

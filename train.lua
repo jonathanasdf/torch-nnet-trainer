@@ -22,7 +22,7 @@ local model = Model(opt.model)
 opt.processor.model = model
 
 local function updates(model, pathNames, inputs)
-  local loss, grad_outputs = opt.processor:processBatch(pathNames, model:forward(inputs))
+  local loss, grad_outputs = opt.processor:evaluateBatch(pathNames, model:forward(inputs))
   model:backward(inputs, grad_outputs)
   return function(x)
     return loss, model.gradParameters
@@ -30,4 +30,3 @@ local function updates(model, pathNames, inputs)
 end
 
 model:train(opt, opt.processor.updates or updates)
-model:save(opt.output)

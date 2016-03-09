@@ -39,39 +39,34 @@ local pos_correct = 0
 local neg_correct = 0
 local pos_total = 0
 local neg_total = 0
-function M:processBatch(pathNames, outputs, testPhase)
+function M:testBatch(pathNames, outputs)
   local labels = self:getLabels(pathNames)
+  local pred
 
-  if testPhase then
-    assert(self.opt.svm ~= '', 'for testing, a trained svm must be used.')
-
+  if self.opt.svm == '' then
+    _, pred = torch.max(outputs, 2)
+    pred = pred:squeeze()
+  else
     if not(self.svm_model) then
       self.svm_model = torch.load(self.opt.svm)
     end
     local data = convertTensorToSVMLight(labels, findModuleByName(self.model, self.opt.layer).output)
-    local pred, _, _ = liblinear.predict(data, self.svm_model, '-q')
+    pred = liblinear.predict(data, self.svm_model, '-q')
+  end
 
-    for i=1,#pathNames do
-      if labels[i] == 2 then
-        pos_total = pos_total + 1
-        if pred[i] == labels[i] then
-          pos_correct = pos_correct + 1
-        end
-      else
-        neg_total = neg_total + 1
-        if pred[i] == labels[i] then
-          neg_correct = neg_correct + 1
-        end
+  for i=1,#pathNames do
+    if labels[i] == 2 then
+      pos_total = pos_total + 1
+      if pred[i] == labels[i] then
+        pos_correct = pos_correct + 1
+      end
+    else
+      neg_total = neg_total + 1
+      if pred[i] == labels[i] then
+        neg_correct = neg_correct + 1
       end
     end
   end
-
-  if nGPU > 0 then
-    labels = labels:cuda()
-  end
-  local loss = self.criterion:forward(outputs, labels)
-  local grad_outputs = self.criterion:backward(outputs, labels)
-  return loss, grad_outputs
 end
 
 function M:printStats()

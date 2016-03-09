@@ -61,7 +61,7 @@ local function updates(student, pathNames, inputs)
     student:backward(inputs, soft_grad_outputs)
   end
 
-  local hard_loss, hard_grad_outputs = opt.processor:processBatch(pathNames, student_outputs)
+  local hard_loss, hard_grad_outputs = opt.processor:evaluateBatch(pathNames, student_outputs)
   student:backward(inputs, hard_grad_outputs*opt.lambda)
 
   return function(x)
@@ -70,4 +70,3 @@ local function updates(student, pathNames, inputs)
 end
 
 student:train(opt, updates)
-student:save(opt.output)

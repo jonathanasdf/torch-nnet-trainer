@@ -9,6 +9,7 @@ cmd:argument('-model', 'model to load')
 cmd:argument('-input', 'input file or folder')
 defineBaseOptions(cmd)     --defined in utils.lua
 -- Additional processor functions:
+--   -testBatch(pathNames, outputs): accumulate statistics
 --   -printStats(): outputs statistics
 
 local opt = processArgs(cmd)
@@ -18,7 +19,7 @@ local model = Model(opt.model)
 opt.processor.model = model
 
 local function testBatch(pathNames, inputs)
-  opt.processor:processBatch(pathNames, model:forward(inputs, true), true)
+  opt.processor:testBatch(pathNames, model:forward(inputs, true))
 end
 
 DataLoader{

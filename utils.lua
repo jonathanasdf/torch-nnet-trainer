@@ -4,7 +4,7 @@ function defineBaseOptions(cmd)
     'REQUIRED. lua file that preprocesses input and handles output. '
     .. 'Functions that can be defined:\n'
     .. '    -preprocess(img): takes a single img and prepares it for the network\n'
-    .. '    -processBatch(pathNames, outputs, calculateStats): returns [loss, grad_outputs]\n'
+    .. '    -evaluateBatch(pathNames, outputs): returns [loss, grad_outputs]\n'
   )
   cmd:option('-processor_opts', '', 'additional options for the processor')
   cmd:option('-batchSize', 32, 'batch size')
@@ -30,6 +30,8 @@ function processArgs(cmd)
   local opt = cmd:parse(arg or {})
   nGPU = opt.nGPU
   noUseDataParallelTable = opt.noUseDataParallelTable
+
+  opt.batchCount = opt.batchSize * opt.update_every
 
   torch.setnumthreads(opt.nThreads)
   local Threads = require 'threads'
@@ -125,6 +127,20 @@ function findModuleByName(model, name)
     end
   end
   return nil
+end
+
+function printOutputSizes(model)
+  if class.istype(model, 'Model') then
+    printOutputSizes(model.model)
+    return
+  end
+  if model.output then
+    print(model, #model.output)
+  end
+  if not(model.modules) then return end
+  for i=1,#model.modules do
+    printOutputSizes(model.modules[i])
+  end
 end
 
 local va = require 'vararg'

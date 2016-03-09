@@ -73,7 +73,7 @@ end
 
 local function validBatch(model, processor, pathNames, inputs)
   model.valid_loss = model.valid_loss +
-    processor:processBatch(pathNames, model:forward(inputs, true))
+    processor:evaluateBatch(pathNames, model:forward(inputs, true))
   model.valid_count = model.valid_count + #pathNames
 end
 
@@ -127,7 +127,7 @@ function M:train(opt, updates)
                             opt.valSize,
                             false, --don't shuffle
                             valFn)
-      self.valid_loss = self.valid_loss / self.valid_count
+      self.valid_loss = self.valid_loss / (self.valid_count / opt.batchCount)
       print(string.format('  Validation loss: %.6f', self.valid_loss))
     end
 
@@ -135,9 +135,12 @@ function M:train(opt, updates)
        opt.output and opt.output ~= '/dev/null' then
       self:save(opt.output .. '.cached')
       opt.optimState.dfdx = nil
-      torch.save(opt.output .. '.optimState', opt.optimState)
+      torch.save(opt.output .. '.cached.optimState', opt.optimState)
     end
   end
+  self:save(opt.output)
+  opt.optimState.dfdx = nil
+  torch.save(opt.output .. '.optimState', opt.optimState)
 end
 
 function M:forward(inputs, deterministic)
