@@ -41,7 +41,7 @@ if nGPU > 0 then
   criterion = criterion:cuda()
 end
 
-local function updates(student, pathNames, inputs)
+local function trainBatch(student, pathNames, inputs)
   local logits = teacher:forward(inputs, true)
   if opt.hintLayer ~= '' then
     logits = findModuleByName(teacher, opt.hintLayer).output
@@ -64,9 +64,7 @@ local function updates(student, pathNames, inputs)
   local hard_loss, hard_grad_outputs = opt.processor:evaluateBatch(pathNames, student_outputs)
   student:backward(inputs, hard_grad_outputs*opt.lambda)
 
-  return function(x)
-    return soft_loss + hard_loss, student.gradParameters
-  end
+  return soft_loss + hard_loss
 end
 
-student:train(opt, updates)
+student:train(opt, trainBatch)

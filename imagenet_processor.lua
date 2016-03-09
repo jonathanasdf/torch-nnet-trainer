@@ -72,6 +72,7 @@ end
 local top1 = 0
 local top5 = 0
 local total = 0
+local last_outputs
 function M:testBatch(pathNames, outputs)
   local labels = self:getLabels(pathNames)
 

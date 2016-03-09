@@ -29,12 +29,13 @@ function M:evaluateBatch(pathNames, outputs)
   if not(self.criterion) then
     error('self.criterion is not defined. Either define a criterion or a custom evaluateBatch.')
   end
+
   local labels = self:getLabels(pathNames)
   if nGPU > 0 then
     labels = labels:cuda()
   end
+  --Assumes self.criterion.sizeAverage = false
   local loss = self.criterion:forward(outputs, labels) / self.opt.batchCount
-  --Assumes criterion has sizeAverage = false
   local grad_outputs = self.criterion:backward(outputs, labels) / self.opt.batchCount
   return loss, grad_outputs
 end

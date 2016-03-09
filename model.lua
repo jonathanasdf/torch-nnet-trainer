@@ -8,6 +8,7 @@
 --
 require 'cunn'
 require 'cudnn'
+require 'dpnn'
 require 'optim'
 require 'paths'
 
@@ -54,15 +55,17 @@ function M:load(path)
   return self
 end
 
-local function trainBatch(model, updates, opt, pathNames, inputs)
+local function trainBatch(model, trainFn, opt, pathNames, inputs)
   if nGPU > 0 then
     inputs = inputs:cuda()
   end
 
   opt.train_iter = opt.train_iter + 1
-  local feval = updates(model, pathNames, inputs)
+  model.train_loss = model.train_loss + trainFn(model, pathNames, inputs)
   if opt.train_iter % opt.update_every == 0 then
-    optim.sgd(feval, model.parameters, opt.optimState)
+    optim.sgd(function() return model.train_loss, model.gradParameters end,
+              model.parameters, opt.optimState)
+    model.train_loss = 0
     model:zeroGradParameters()
   end
 
@@ -77,7 +80,7 @@ local function validBatch(model, processor, pathNames, inputs)
   model.valid_count = model.valid_count + #pathNames
 end
 
-function M:train(opt, updates)
+function M:train(opt, trainFn)
   if not(opt.input) then
     error('Input must be defined for training.')
   end
@@ -108,9 +111,18 @@ function M:train(opt, updates)
     }
   end
 
-  self:zeroGradParameters()
+  local signal = require("posix.signal")
+  signal.signal(signal.SIGINT, function(signum)
+    self:save(opt.output .. '.interrupt')
+    opt.optimState.dfdx = nil
+    torch.save(opt.output .. '.interrupt.optimState', opt.optimState)
+    os.exit(128 + signum)
+  end)
+
   opt.train_iter = 0
-  local trainFn = bind(trainBatch, self, updates, opt)
+  self.train_loss = 0
+  self:zeroGradParameters()
+  local trainFn = bind(trainBatch, self, trainFn, opt)
   local valFn = bind(validBatch, self, opt.processor)
   for epoch=1,opt.epochs do
     print('==> training epoch # ' .. epoch)

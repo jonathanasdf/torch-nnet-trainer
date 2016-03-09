@@ -13,7 +13,7 @@ cmd:argument('-output', 'path to save trained model')
 defineBaseOptions(cmd)
 defineTrainingOptions(cmd)
 -- Additional processor functions:
---   -updates(model, pathNames, inputs): custom updates function for optim
+--   -trainBatch(model, pathNames, inputs): custom function for training. Propagate gradients back through model and return loss
 
 local opt = processArgs(cmd)
 assert(paths.filep(opt.model), 'Cannot find model ' .. opt.model)
@@ -21,12 +21,10 @@ assert(paths.filep(opt.model), 'Cannot find model ' .. opt.model)
 local model = Model(opt.model)
 opt.processor.model = model
 
-local function updates(model, pathNames, inputs)
+local function trainBatch(model, pathNames, inputs)
   local loss, grad_outputs = opt.processor:evaluateBatch(pathNames, model:forward(inputs))
   model:backward(inputs, grad_outputs)
-  return function(x)
-    return loss, model.gradParameters
-  end
+  return loss
 end
 
-model:train(opt, opt.processor.updates or updates)
+model:train(opt, opt.processor.trainBatch or trainBatch)
