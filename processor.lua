@@ -42,7 +42,7 @@ function M:evaluateBatch(pathNames, outputs)
   --Assumes self.criterion.sizeAverage = false
   local loss = self.criterion:forward(outputs, labels) / self.opt.batchCount
   local grad_outputs = self.criterion:backward(outputs, labels) / self.opt.batchCount
-  return loss, grad_outputs, correct
+  return grad_outputs, loss, correct
 end
 
 function M:testBatch(pathNames, outputs) end

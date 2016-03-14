@@ -4,7 +4,7 @@ function defineBaseOptions(cmd)
     'REQUIRED. lua file that preprocesses input and handles output. '
     .. 'Functions that can be defined:\n'
     .. '    -preprocess(img): takes a single img and prepares it for the network\n'
-    .. '    -evaluateBatch(pathNames, outputs): returns [loss, grad_outputs]\n'
+    .. '    -evaluateBatch(pathNames, outputs): returns (grad_outputs, loss, #correct)\n'
   )
   cmd:option('-processor_opts', '', 'additional options for the processor')
   cmd:option('-batchSize', 32, 'batch size')

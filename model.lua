@@ -60,12 +60,11 @@ local function trainBatch(model, trainFn, opt, pathNames, inputs)
     inputs = inputs:cuda()
   end
 
+  trainFn(model, pathNames, inputs)
+
   opt.train_iter = opt.train_iter + 1
-  model.train_loss = model.train_loss + trainFn(model, pathNames, inputs)
   if opt.train_iter % opt.update_every == 0 then
-    optim.sgd(function() return model.train_loss, model.gradParameters end,
-              model.parameters, opt.optimState)
-    model.train_loss = 0
+    optim.sgd(function() return 0, model.gradParameters end, model.parameters, opt.optimState)
     model:zeroGradParameters()
   end
 
@@ -75,7 +74,7 @@ local function trainBatch(model, trainFn, opt, pathNames, inputs)
 end
 
 local function validBatch(model, processor, pathNames, inputs)
-  local loss, _, correct = processor:evaluateBatch(pathNames, model:forward(inputs, true))
+  local _, loss, correct = processor:evaluateBatch(pathNames, model:forward(inputs, true))
   model.valid_loss = model.valid_loss + loss
   model.valid_acc = model.valid_acc + correct
   model.valid_count = model.valid_count + #pathNames
@@ -122,7 +121,6 @@ function M:train(opt, trainFn)
   end)
 
   opt.train_iter = 0
-  self.train_loss = 0
   self:zeroGradParameters()
   local trainFn = bind(trainBatch, self, trainFn, opt)
   local valFn = bind(validBatch, self, opt.processor)
@@ -145,7 +143,7 @@ function M:train(opt, trainFn)
                             valFn)
       self.valid_loss = self.valid_loss / (self.valid_count / opt.batchCount)
       print(string.format('  Validation loss: %.6f', self.valid_loss))
-      print(string.format('  Validation accuracy: %d / %d = %.6f', self.valid_acc, self.valid_count, self.valid_acc / self.valid_count))
+      print(string.format('  Validation accuracy: %d / %d = %.6f%%', self.valid_acc, self.valid_count, self.valid_acc / self.valid_count))
     end
 
     if opt.cache_every ~= -1 and epoch % opt.cache_every == 0 and

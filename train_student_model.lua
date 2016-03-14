@@ -52,7 +52,7 @@ local function trainBatch(student, pathNames, inputs)
     student_logits = student.model.modules[#student.model.modules-1].output
   end
 
-  local soft_loss = criterion:forward(student_logits, logits)
+  criterion:forward(student_logits, logits)
   local soft_grad_outputs = criterion:backward(student_logits, logits)*opt.T*opt.T
 
   if hasSoftmax then
@@ -61,10 +61,8 @@ local function trainBatch(student, pathNames, inputs)
     student:backward(inputs, soft_grad_outputs)
   end
 
-  local hard_loss, hard_grad_outputs = opt.processor:evaluateBatch(pathNames, student_outputs)
-  student:backward(inputs, hard_grad_outputs*opt.lambda)
-
-  return soft_loss + hard_loss
+  local hard_grad_outputs = opt.processor:evaluateBatch(pathNames, student_outputs)*opt.lambda
+  student:backward(inputs, hard_grad_outputs)
 end
 
 student:train(opt, trainBatch)
