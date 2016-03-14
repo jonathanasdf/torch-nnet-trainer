@@ -16,7 +16,7 @@ end
 function defineTrainingOptions(cmd)
   cmd:option('-LR', 0.001, 'learning rate')
   cmd:option('-momentum', 0.9, 'momentum')
-  cmd:option('-weightDecay', 0.005, 'weight decay')
+  cmd:option('-weightDecay', 0.0005, 'weight decay')
   cmd:option('-epochs', 50, 'num epochs')
   cmd:option('-update_every', 1, 'update model with sgd every n batches')
   cmd:option('-cache_every', 20, 'save model every n epochs. Set to -1 or a value >epochs to disable')
@@ -32,6 +32,7 @@ function processArgs(cmd)
   nGPU = opt.nGPU
   noUseDataParallelTable = opt.noUseDataParallelTable
 
+  if not opt.update_every then opt.update_every = 1 end
   opt.batchCount = opt.batchSize * opt.update_every
 
   torch.setnumthreads(opt.nThreads)

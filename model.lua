@@ -75,8 +75,9 @@ local function trainBatch(model, trainFn, opt, pathNames, inputs)
 end
 
 local function validBatch(model, processor, pathNames, inputs)
-  model.valid_loss = model.valid_loss +
-    processor:evaluateBatch(pathNames, model:forward(inputs, true))
+  local loss, _, correct = processor:evaluateBatch(pathNames, model:forward(inputs, true))
+  model.valid_loss = model.valid_loss + loss
+  model.valid_acc = model.valid_acc + correct
   model.valid_count = model.valid_count + #pathNames
 end
 
@@ -94,7 +95,8 @@ function M:train(opt, trainFn)
   if opt.val ~= '' then
     valid_loader = DataLoader{
       path = opt.val,
-      preprocessor = opt.processor.preprocess
+      preprocessor = opt.processor.preprocess,
+      randomize = true
     }
   end
 
@@ -124,6 +126,7 @@ function M:train(opt, trainFn)
   self:zeroGradParameters()
   local trainFn = bind(trainBatch, self, trainFn, opt)
   local valFn = bind(validBatch, self, opt.processor)
+
   for epoch=1,opt.epochs do
     print('==> training epoch # ' .. epoch)
 
@@ -135,12 +138,14 @@ function M:train(opt, trainFn)
     if opt.val ~= '' and epoch % opt.val_every == 0 then
       self.valid_count = 0
       self.valid_loss = 0
+      self.valid_acc = 0
       valid_loader:runAsync(opt.batchSize,
                             opt.valSize,
                             false, --don't shuffle
                             valFn)
       self.valid_loss = self.valid_loss / (self.valid_count / opt.batchCount)
       print(string.format('  Validation loss: %.6f', self.valid_loss))
+      print(string.format('  Validation accuracy: %d / %d = %.6f', self.valid_acc, self.valid_count, self.valid_acc / self.valid_count))
     end
 
     if opt.cache_every ~= -1 and epoch % opt.cache_every == 0 and

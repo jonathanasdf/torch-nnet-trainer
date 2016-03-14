@@ -17,8 +17,12 @@ local initcheck = argcheck{
 
   {name='preprocessor',
    type='function',
-   help='applied to image (ex: jittering). It takes the image as input',
-   opt = true},
+   help='applied to image (ex: jittering). It takes the image as input'},
+
+  {name='randomize',
+   type='boolean',
+   help='whether to shuffle all of the images once after reading them',
+   default=false}
 }
 
 local dataLoader = torch.class('DataLoader')
@@ -59,6 +63,10 @@ function DataLoader:__init(...)
 
   self.numSamples = #self.lineOffset
   print(self.numSamples ..  ' images found.')
+
+  if self.randomize then
+    self.shuffle = torch.randperm(self.numSamples)
+  end
 end
 
 function DataLoader:size()
@@ -136,14 +144,14 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, resultHandler)
     xlua.progress(jobsDone, epochSize)
   end
 
-  local perm
+  local perm = self.shuffle
   if shuffle then
     perm = torch.randperm(self:size())
   end
   for i=1,epochSize do
     local indexStart = (i-1) * batchSize + 1
     local indexEnd = (indexStart + batchSize - 1)
-    local pathNames = self:get(indexStart, indexEnd, shuffle and perm or nil)
+    local pathNames = self:get(indexStart, indexEnd, perm)
     threads:addjob(runFn, doneFn, pathNames, self.preprocessor)
   end
   threads:synchronize()

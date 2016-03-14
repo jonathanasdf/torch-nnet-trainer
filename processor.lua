@@ -34,10 +34,15 @@ function M:evaluateBatch(pathNames, outputs)
   if nGPU > 0 then
     labels = labels:cuda()
   end
+
+  --Assumes classification
+  local _, pred = torch.max(outputs, 2)
+  local correct = torch.eq(pred:squeeze(), labels):sum()
+
   --Assumes self.criterion.sizeAverage = false
   local loss = self.criterion:forward(outputs, labels) / self.opt.batchCount
   local grad_outputs = self.criterion:backward(outputs, labels) / self.opt.batchCount
-  return loss, grad_outputs
+  return loss, grad_outputs, correct
 end
 
 function M:testBatch(pathNames, outputs) end
