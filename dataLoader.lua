@@ -15,10 +15,6 @@ local initcheck = argcheck{
    type='string',
    help='path of directories with images'},
 
-  {name='preprocessor',
-   type='function',
-   help='applied to image (ex: jittering). It takes the image as input'},
-
   {name='randomize',
    type='boolean',
    help='whether to shuffle all of the images once after reading them',
@@ -116,7 +112,16 @@ function DataLoader:get(start, end_incl, source)
   return self:retrieve(indices)
 end
 
-function DataLoader:runAsync(batchSize, epochSize, shuffle, resultHandler)
+function DataLoader.LoadInputs(pathNames, preprocessorFn)
+  collectgarbage()
+  local inputs = {}
+  for j=1,#pathNames do
+    inputs[#inputs+1] = preprocessorFn(pathNames[j])
+  end
+  return pathNames, tableToBatchTensor(inputs)
+end
+
+function DataLoader:runAsync(batchSize, epochSize, shuffle, preprocessor, resultHandler)
   if batchSize == -1 then
     batchSize = self:size()
   end
@@ -128,15 +133,6 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, resultHandler)
 
   local jobsDone = 0
   xlua.progress(jobsDone, epochSize)
-
-  local runFn = function(pathNames, preprocessor)
-    collectgarbage()
-    local inputs = {}
-    for j=1,#pathNames do
-      inputs[#inputs+1] = preprocessor(pathNames[j])
-    end
-    return pathNames, tableToBatchTensor(inputs)
-  end
 
   local doneFn = function(pathNames, inputs)
     resultHandler(pathNames, inputs)
@@ -152,7 +148,7 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, resultHandler)
     local indexStart = (i-1) * batchSize + 1
     local indexEnd = (indexStart + batchSize - 1)
     local pathNames = self:get(indexStart, indexEnd, perm)
-    threads:addjob(runFn, doneFn, pathNames, self.preprocessor)
+    threads:addjob(self.LoadInputs, doneFn, pathNames, preprocessor)
   end
   threads:synchronize()
 end

@@ -32,12 +32,10 @@ local function accumulateData(pathNames, inputs)
   convertTensorToSVMLight(labels, outputs, data)
 end
 
-DataLoader{
-  path = opt.input,
-  preprocessor = opt.processor.preprocess
-}:runAsync(opt.batchSize,
+DataLoader{path = opt.input}:runAsync(opt.batchSize,
            opt.epochSize,
            true,           -- shuffle,
+           opt.processor.preprocess,
            accumulateData) -- resultHandler
 
 local svm_model = liblinear.train(data, '-s 2 -B 1')

@@ -42,6 +42,7 @@ function processArgs(cmd)
     opt.nThreads,
     function()
       package.path = package.path .. ';/home/jshen/scripts/?.lua'
+      package.path = package.path .. ';/home/nvesdapu/opencv/?.lua'
     end,
     function()
       torch.setdefaulttensortype('torch.FloatTensor')
@@ -60,9 +61,14 @@ function processArgs(cmd)
   if opt.processor == '' then
     error('A processor must be supplied.')
   end
-  opt.processor = dofile(opt.processor).new(opt)
+  opt.processor = requirePath(opt.processor).new(opt)
 
   return opt
+end
+
+function requirePath(path)
+  package.path = package.path .. ';' .. paths.dirname(path) .. '/?.lua'
+  return require(paths.basename(path, 'lua'))
 end
 
 function tablelength(T)

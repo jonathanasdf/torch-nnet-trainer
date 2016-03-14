@@ -22,12 +22,11 @@ local function testBatch(pathNames, inputs)
   opt.processor:testBatch(pathNames, model:forward(inputs, true))
 end
 
-DataLoader{
-  path = opt.input,
-  preprocessor = opt.processor.preprocess
-}:runAsync(opt.batchSize,
-           opt.epochSize,
-           true,          -- shuffle,
-           testBatch)     -- resultHandler
+DataLoader{path = opt.input}:runAsync(
+  opt.batchSize,
+  opt.epochSize,
+  true,          -- shuffle,
+  opt.processor.preprocess,
+  testBatch)     -- resultHandler
 
 opt.processor:printStats()

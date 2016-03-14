@@ -85,18 +85,11 @@ function M:train(opt, trainFn)
     error('Input must be defined for training.')
   end
 
-  local train_loader = DataLoader{
-    path = opt.input,
-    preprocessor = opt.processor.preprocess
-  }
+  local train_loader = DataLoader{path = opt.input}
 
   local valid_loader
   if opt.val ~= '' then
-    valid_loader = DataLoader{
-      path = opt.val,
-      preprocessor = opt.processor.preprocess,
-      randomize = true
-    }
+    valid_loader = DataLoader{path = opt.val, randomize = true}
   end
 
   if opt.optimState ~= '' then
@@ -131,6 +124,7 @@ function M:train(opt, trainFn)
     train_loader:runAsync(opt.batchSize,
                           opt.epochSize,
                           true, --shuffle
+                          opt.processor.preprocess,
                           trainFn)
 
     if opt.val ~= '' and epoch % opt.val_every == 0 then
@@ -140,10 +134,11 @@ function M:train(opt, trainFn)
       valid_loader:runAsync(opt.batchSize,
                             opt.valSize,
                             false, --don't shuffle
+                            opt.processor.preprocess,
                             valFn)
       self.valid_loss = self.valid_loss / (self.valid_count / opt.batchCount)
       print(string.format('  Validation loss: %.6f', self.valid_loss))
-      print(string.format('  Validation accuracy: %d / %d = %.6f%%', self.valid_acc, self.valid_count, self.valid_acc / self.valid_count))
+      print(string.format('  Validation accuracy: %d / %d = %.6f%%', self.valid_acc, self.valid_count, self.valid_acc * 100.0 / self.valid_count))
     end
 
     if opt.cache_every ~= -1 and epoch % opt.cache_every == 0 and
