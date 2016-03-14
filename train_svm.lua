@@ -35,7 +35,7 @@ end
 DataLoader{path = opt.input}:runAsync(opt.batchSize,
            opt.epochSize,
            true,           -- shuffle,
-           opt.processor.preprocess,
+           opt.processor.preprocessFn,
            accumulateData) -- resultHandler
 
 local svm_model = liblinear.train(data, '-s 2 -B 1')

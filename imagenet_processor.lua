@@ -4,11 +4,9 @@ local Processor = require 'processor'
 
 local M = class('ImageNetProcessor', 'Processor')
 
-local cropSize
 function M:__init(opt)
   self.cmd:option('-cropSize', 224, 'What size to crop to.')
   Processor.__init(self, opt)
-  cropSize = self.opt.cropSize
 
   self.words = {}
   self.lookup = {}
@@ -32,7 +30,7 @@ function M:__init(opt)
   end
 end
 
-function M.preprocess(path)
+function M.preprocess(path, opt)
   local img = image.load(path, 3)
 
   -- find the smaller dimension, and resize it to 256
@@ -44,9 +42,9 @@ function M.preprocess(path)
 
   local iW = img:size(3)
   local iH = img:size(2)
-  local w1 = math.ceil((iW-cropSize)/2)
-  local h1 = math.ceil((iH-cropSize)/2)
-  img = image.crop(img, w1, h1, w1+cropSize, h1+cropSize) -- center patch
+  local w1 = math.ceil((iW-opt.cropSize)/2)
+  local h1 = math.ceil((iH-opt.cropSize)/2)
+  img = image.crop(img, w1, h1, w1+opt.cropSize, h1+opt.cropSize) -- center patch
   local mean_pixel = torch.FloatTensor({103.939, 116.779, 123.68})
   local perm = torch.LongTensor{3, 2, 1}
   img = img:index(1, perm):mul(255.0)

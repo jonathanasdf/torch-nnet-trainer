@@ -8,13 +8,11 @@ local Processor = require 'processor'
 
 local M = class('CaltechProcessor', 'Processor')
 
-local imageSize
 function M:__init(opt)
   self.cmd:option('-imageSize', 227, 'What to resize to.')
   self.cmd:option('-svm', '', 'SVM to use')
   self.cmd:option('-layer', 'fc7', 'layer to use as SVM input')
   Processor.__init(self, opt)
-  imageSize = self.opt.imageSize
 
   self.criterion = nn.TrueNLLCriterion()
   self.criterion.sizeAverage = false
@@ -24,10 +22,10 @@ function M:__init(opt)
   end
 end
 
-function M.preprocess(path)
+function M.preprocess(path, opt)
   local img = cv.imread{path, cv.IMREAD_COLOR}:float():transpose(3, 1, 2)
   local mean_pixel = torch.FloatTensor{103.939, 116.779, 123.68}:view(3, 1, 1):expandAs(img)
-  return image.scale(img - mean_pixel, imageSize, imageSize)
+  return image.scale(img - mean_pixel, opt.imageSize, opt.imageSize)
 end
 
 function M:getLabels(pathNames)

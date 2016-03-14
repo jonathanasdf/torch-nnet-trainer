@@ -3,7 +3,7 @@ function defineBaseOptions(cmd)
     '-processor',
     'REQUIRED. lua file that preprocesses input and handles output. '
     .. 'Functions that can be defined:\n'
-    .. '    -preprocess(img): takes a single img and prepares it for the network\n'
+    .. '    -preprocess(img, opt): takes a single img and prepares it for the network\n'
     .. '    -evaluateBatch(pathNames, outputs): returns (grad_outputs, loss, #correct)\n'
   )
   cmd:option('-processor_opts', '', 'additional options for the processor')
@@ -61,7 +61,7 @@ function processArgs(cmd)
   if opt.processor == '' then
     error('A processor must be supplied.')
   end
-  opt.processor = requirePath(opt.processor).new(opt)
+  opt.processor = requirePath(opt.processor)(opt)
 
   return opt
 end
@@ -155,8 +155,15 @@ end
 local va = require 'vararg'
 function bind(f, ...)
   local outer_args = va(...)
-  local function closure (...)
+  local function closure(...)
     return f(va.concat(outer_args, va(...)))
+  end
+  return closure
+end
+
+function bind_post(f, arg)
+  local function closure(input)
+    return f(input, arg)
   end
   return closure
 end

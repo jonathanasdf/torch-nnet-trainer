@@ -124,7 +124,7 @@ function M:train(opt, trainFn)
     train_loader:runAsync(opt.batchSize,
                           opt.epochSize,
                           true, --shuffle
-                          opt.processor.preprocess,
+                          opt.processor.preprocessFn,
                           trainFn)
 
     if opt.val ~= '' and epoch % opt.val_every == 0 then
@@ -134,7 +134,7 @@ function M:train(opt, trainFn)
       valid_loader:runAsync(opt.batchSize,
                             opt.valSize,
                             false, --don't shuffle
-                            opt.processor.preprocess,
+                            opt.processor.preprocessFn,
                             valFn)
       self.valid_loss = self.valid_loss / (self.valid_count / opt.batchCount)
       print(string.format('  Validation loss: %.6f', self.valid_loss))

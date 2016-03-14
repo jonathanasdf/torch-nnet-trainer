@@ -1,6 +1,7 @@
 local class = require 'class'
 require 'image'
 require 'paths'
+require 'utils'
 
 local M = class('Processor')
 
@@ -15,9 +16,11 @@ function M:__init(opt)
   for k,v in pairs(new_opts) do
     self.opt[k] = v
   end
+
+  self.preprocessFn = bind_post(self.preprocess, self.opt)
 end
 
-function M.preprocess(path)
+function M.preprocess(path, opt)
   return image.load(path, 3)
 end
 

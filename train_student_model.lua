@@ -29,7 +29,7 @@ if #teacher.model:findModules('cudnn.SoftMax') ~= 0 or
   teacher.model:remove()
 end
 if opt.teacher_processor ~= '' then
-  opt.teacher_processor = requirePath(opt.teacher_processor).new(opt)
+  opt.teacher_processor = requirePath(opt.teacher_processor)(opt)
   opt.teacher_processor.model = teacher
 end
 
@@ -49,7 +49,7 @@ end
 local function trainBatch(student, pathNames, student_inputs)
   local teacher_inputs = student_inputs
   if opt.teacher_processor ~= '' then
-    _, teacher_inputs = DataLoader.LoadInputs(pathNames, opt.teacher_processor.preprocess)
+    _, teacher_inputs = DataLoader.LoadInputs(pathNames, opt.teacher_processor.preprocessFn)
   end
   local logits = teacher:forward(teacher_inputs, true)
   if opt.hintLayer ~= '' then

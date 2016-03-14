@@ -112,16 +112,16 @@ function DataLoader:get(start, end_incl, source)
   return self:retrieve(indices)
 end
 
-function DataLoader.LoadInputs(pathNames, preprocessorFn)
+function DataLoader.LoadInputs(pathNames, preprocessFn)
   collectgarbage()
   local inputs = {}
   for j=1,#pathNames do
-    inputs[#inputs+1] = preprocessorFn(pathNames[j])
+    inputs[#inputs+1] = preprocessFn(pathNames[j])
   end
   return pathNames, tableToBatchTensor(inputs)
 end
 
-function DataLoader:runAsync(batchSize, epochSize, shuffle, preprocessor, resultHandler)
+function DataLoader:runAsync(batchSize, epochSize, shuffle, preprocessFn, resultHandler)
   if batchSize == -1 then
     batchSize = self:size()
   end
@@ -148,7 +148,7 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, preprocessor, result
     local indexStart = (i-1) * batchSize + 1
     local indexEnd = (indexStart + batchSize - 1)
     local pathNames = self:get(indexStart, indexEnd, perm)
-    threads:addjob(self.LoadInputs, doneFn, pathNames, preprocessor)
+    threads:addjob(self.LoadInputs, doneFn, pathNames, preprocessFn)
   end
   threads:synchronize()
 end
