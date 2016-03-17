@@ -10,7 +10,7 @@ function defineBaseOptions(cmd)
   cmd:option('-batchSize', 32, 'batch size')
   cmd:option('-epochSize', -1, 'num batches per epochs. -1 means run all available data once')
   cmd:option('-nThreads', 8, 'number of threads')
-  cmd:option('-nGPU', 4, 'number of GPU to use. Set to 0 to use CPU')
+  cmd:option('-nGPU', 1, 'number of GPU to use. Set to 0 to use CPU')
 end
 
 function defineTrainingOptions(cmd)
