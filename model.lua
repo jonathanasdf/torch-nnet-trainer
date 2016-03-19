@@ -13,6 +13,7 @@ require 'optim'
 require 'paths'
 
 require 'dataLoader'
+require 'resnet'
 require 'utils'
 
 local M = torch.class('Model')
@@ -52,6 +53,8 @@ function M:load(path)
 
   print('=> Model')
   print(self.model)
+
+  print('Total parameters: ', self.gradParameters:size(1))
   return self
 end
 

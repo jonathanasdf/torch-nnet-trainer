@@ -1,3 +1,4 @@
+Count flops
 Allow for customization of sgd strategy
 Add hard negative mining to train_svm.lua
 Add README and upload to github?
