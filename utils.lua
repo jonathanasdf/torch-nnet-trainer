@@ -34,8 +34,13 @@ function processArgs(cmd)
   nGPU = opt.nGPU
   noUseDataParallelTable = opt.noUseDataParallelTable
 
+  if opt.batchSize <= 1 then
+    error('Sorry, this framework only supports batchSize > 1.')
+  end
+
   if not opt.update_every then opt.update_every = 1 end
   opt.batchCount = opt.batchSize * opt.update_every
+  if opt.LR then opt.LR = opt.LR / opt.batchCount end
 
   torch.setnumthreads(opt.nThreads)
   local Threads = require 'threads'
@@ -84,10 +89,8 @@ end
 
 -- Concatenates a table of tensors **of the same size** along a new dimension at the front
 function tableToBatchTensor(T)
-  for k, v in pairs(T) do
-    local sz = v:size():totable()
-    table.insert(sz, 1, 1)
-    T[k] = v:view(torch.LongStorage(sz))
+  for i=1,#T do
+    T[i] = nn.utils.addSingletonDimension(T[i])
   end
   return torch.cat(T, 1)
 end
@@ -168,8 +171,10 @@ function bind(f, ...)
 end
 
 function bind_post(f, arg)
-  local function closure(input)
-    return f(input, arg)
+  local function closure(...)
+    local args = {...}
+    args[#args+1] = arg
+    return f(unpack(args))
   end
   return closure
 end

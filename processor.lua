@@ -23,7 +23,7 @@ end
 -- Takes a path as input and returns something that can be used as input to the model, such as an image
 -- Note that this function is M.preprocess, not M:preprocess
 -- This function is executed on multiple threads, so try not to pass anything very big to it
-function M.preprocess(path, opt, isTraining)
+function M.preprocess(path, isTraining, opt)
   return image.load(path, 3)
 end
 
@@ -51,7 +51,7 @@ function M:trainBatch(pathNames, inputs)
   self.model:backward(inputs, grad_outputs)
 end
 
--- forward and accumulate stats for a test batch. Returns {#correct, #total, aggregated_loss}
+-- forward and accumulate stats for a test batch. Returns {aggregated_loss, #instances_tested}
 function M:testBatch(pathNames, inputs)
   if not(self.criterion) then
     error('self.criterion is not defined. Either define a criterion or a custom testBatch.')
@@ -63,14 +63,10 @@ function M:testBatch(pathNames, inputs)
     labels = labels:cuda()
   end
 
-  --Assumes classification
-  local _, pred = torch.max(outputs, 2)
-  local correct = torch.eq(pred:squeeze(), labels):sum()
-  local total = #pathNames
-
   --Assumes self.criterion.sizeAverage = false
   local loss = self.criterion:forward(outputs, labels)
-  return correct, total, loss
+  local total = #pathNames
+  return loss, total
 end
 
 -- Called before each validation run

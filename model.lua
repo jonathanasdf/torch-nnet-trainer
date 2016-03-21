@@ -77,10 +77,9 @@ local function trainBatch(model, trainFn, opt, pathNames, inputs)
 end
 
 local function validBatch(model, processor, pathNames, inputs)
-  local correct, total, loss = processor:testBatch(pathNames, inputs)
-  model.valid_acc = model.valid_acc + (correct or 0)
-  model.valid_count = model.valid_count + (total or 0)
-  model.valid_loss = model.valid_loss + (loss or 0)
+  local loss, cnt = processor:testBatch(pathNames, inputs)
+  model.valid_loss = model.valid_loss + loss
+  model.valid_count = model.valid_count + cnt
 end
 
 function M:train(opt, trainFn)
@@ -131,9 +130,8 @@ function M:train(opt, trainFn)
                           trainFn)
 
     if opt.val ~= '' and epoch % opt.val_every == 0 then
-      self.valid_count = 0
       self.valid_loss = 0
-      self.valid_acc = 0
+      self.valid_count = 0
       opt.processor:resetStats()
       valid_loader:runAsync(opt.batchSize,
                             opt.valSize,
@@ -142,7 +140,7 @@ function M:train(opt, trainFn)
                             valFn)
       self.valid_loss = self.valid_loss / self.valid_count
       print(string.format('  Validation loss: %.6f', self.valid_loss))
-      print(string.format('  Validation accuracy: %d / %d = %.6f%%', self.valid_acc, self.valid_count, self.valid_acc * 100.0 / self.valid_count))
+      opt.processor:printStats()
     end
 
     if opt.cache_every ~= -1 and epoch % opt.cache_every == 0 and

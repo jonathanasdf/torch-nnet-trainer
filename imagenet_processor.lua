@@ -30,7 +30,7 @@ function M:__init(opt)
   end
 end
 
-function M.preprocess(path, opt, isTraining)
+function M.preprocess(path, isTraining, opt)
   local img = image.load(path, 3)
 
   -- find the smaller dimension, and resize it to 256
@@ -97,7 +97,7 @@ function M:testBatch(pathNames, inputs)
     self.total = self.total + 1
   end
   local loss = self.criterion:forward(outputs, labels)
-  return self.top5, self.total, loss
+  return loss, self.total
 end
 
 function M:printStats()
