@@ -8,10 +8,13 @@ function M:__init(opt)
 end
 
 function M.preprocess(path, isTraining, opt)
-  local imgs = {}
   local dir, name = path:match("(.*)base(.*)")
+  local imgs = {}
   for i=1,10 do
-    imgs[#imgs+1] = image.load(dir .. tostring(i) .. name)
+    imgs[i] = image.load(dir .. tostring(i) .. name)
+    if isTraining then
+      imgs[i] = image.scale(imgs[i], opt.imageSize, opt.imageSize)
+    end
   end
   return torch.cat(imgs, 1)
 end

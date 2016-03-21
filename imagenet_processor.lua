@@ -101,8 +101,8 @@ function M:testBatch(pathNames, inputs)
 end
 
 function M:printStats()
-  print('Top 1 accuracy: ' .. self.top1 .. '/' .. self.total .. ' = ' .. (self.top1*100.0/self.total) .. '%')
-  print('Top 5 accuracy: ' .. self.top5 .. '/' .. self.total .. ' = ' .. (self.top5*100.0/self.total) .. '%')
+  print('  Top 1 accuracy: ' .. self.top1 .. '/' .. self.total .. ' = ' .. (self.top1*100.0/self.total) .. '%')
+  print('  Top 5 accuracy: ' .. self.top5 .. '/' .. self.total .. ' = ' .. (self.top5*100.0/self.total) .. '%')
 end
 
 return M

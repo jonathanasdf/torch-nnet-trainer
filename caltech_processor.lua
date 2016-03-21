@@ -9,11 +9,6 @@ local Processor = require 'processor'
 
 local M = class('CaltechProcessor', 'Processor')
 
-local min = math.min
-local max = math.max
-local floor = math.floor
-local ceil = math.ceil
-
 local function defineSlidingWindowOptions(cmd)
   cmd:option('-windowSizeX', 30, 'width of sliding window')
   cmd:option('-windowSizeY', 50, 'height of sliding window')
@@ -67,12 +62,17 @@ function M:resetStats()
   self.neg_total = 0
 end
 
-function M:slidingWindow(path, img)
-  local sz = self.opt.imageSize
-  local sx = sz / self.opt.windowSizeX
-  local sy = sz / self.opt.windowSizeY
-  local dx = max(1, floor(self.opt.windowStrideX * sx))
-  local dy = max(1, floor(self.opt.windowStrideY * sy))
+local function slidingWindow(path, img, bboxes, opt)
+  local min = math.min
+  local max = math.max
+  local floor = math.floor
+  local ceil = math.ceil
+
+  local sz = opt.imageSize
+  local sx = sz / opt.windowSizeX
+  local sy = sz / opt.windowSizeY
+  local dx = max(1, floor(opt.windowStrideX * sx))
+  local dy = max(1, floor(opt.windowStrideY * sy))
   local w = ceil(img:size(3) * sx)
   local h = ceil(img:size(2) * sy)
   img = image.scale(img, w, h)
@@ -90,9 +90,8 @@ function M:slidingWindow(path, img)
   patches = tableToBatchTensor(patches)
 
   local labels = torch.ones(nPatches)
-  local bboxes = self.bboxes[path:find('val') and 1 or 2]
   local index = tonumber(paths.basename(path, 'png'))
-  if bboxes[index]:nElement() ~= 0 then
+  if bboxes[index] and bboxes[index]:nElement() ~= 0 then
     local SA = sz*sz
     for i=1,bboxes[index]:size(1) do
       local XB1 = bboxes[index][i][1] * sx
@@ -116,7 +115,7 @@ function M:slidingWindow(path, img)
                      max(0, min(YA2, YB2) - max(YA1, YB1))
           local SU = SA + SB - SI
           -- TODO: actually use IOU
-          if SB > 225*sx*sy and SI/SB > self.opt.windowIOU then
+          if SB > 225*sx*sy and SI/SB > opt.windowIOU then
             labels[j*nCols+k+1] = 2
           end
         end
@@ -129,8 +128,7 @@ end
 local min = math.min
 function M:testBatch(pathNames, inputs)
   local loss = 0
-  for k=1,#pathNames do
-    local patches, labels = self:slidingWindow(pathNames[k], inputs[k])
+  local forwardFn = function(patches, labels)
     for i=1,labels:size(1),self.opt.batchSize do
       local j = min(i+self.opt.batchSize-1, labels:size(1))
       local outputs = self.model:forward(patches[{{i,j}}], true)
@@ -163,14 +161,17 @@ function M:testBatch(pathNames, inputs)
       loss = loss + self.criterion:forward(outputs, labels[{{i,j}}])
     end
   end
-
+  for k=1,#pathNames do
+    threads:addjob(slidingWindow, forwardFn, pathNames[k], inputs[k],
+        self.bboxes[pathNames[k]:find('val') and 1 or 2], self.opt)
+  end
   return loss, self.pos_total + self.neg_total
 end
 
 function M:printStats()
-  print('Accuracy: ' .. (self.pos_correct + self.neg_correct) .. '/' .. (self.pos_total + self.neg_total) .. ' = ' .. ((self.pos_correct + self.neg_correct)*100.0/(self.pos_total + self.neg_total)) .. '%')
-  print('Positive Accuracy: ' .. self.pos_correct .. '/' .. self.pos_total .. ' = ' .. (self.pos_correct*100.0/self.pos_total) .. '%')
-  print('Negative Accuracy: ' .. self.neg_correct .. '/' .. self.neg_total .. ' = ' .. (self.neg_correct*100.0/self.neg_total) .. '%')
+  print('  Accuracy: ' .. (self.pos_correct + self.neg_correct) .. '/' .. (self.pos_total + self.neg_total) .. ' = ' .. ((self.pos_correct + self.neg_correct)*100.0/(self.pos_total + self.neg_total)) .. '%')
+  print('  Positive Accuracy: ' .. self.pos_correct .. '/' .. self.pos_total .. ' = ' .. (self.pos_correct*100.0/self.pos_total) .. '%')
+  print('  Negative Accuracy: ' .. self.neg_correct .. '/' .. self.neg_total .. ' = ' .. (self.neg_correct*100.0/self.neg_total) .. '%')
 end
 
 return M

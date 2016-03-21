@@ -15,6 +15,7 @@ cmd:argument('-output', 'path to save trained student model')
 defineBaseOptions(cmd)     --defined in utils.lua
 defineTrainingOptions(cmd) --defined in train.lua
 cmd:option('-teacher_processor', '', 'alternate processor for teacher model')
+cmd:option('-teacher_processor_opts', '', 'alternate processor options for teacher model')
 cmd:option('-hintLayer', '', 'which hint layer to use. Defaults to last non-softmax layer')
 cmd:option('-T', 2, 'temperature')
 cmd:option('-lambda', 2, 'soft target relative weight')
@@ -22,16 +23,6 @@ cmd:option('-lambda', 2, 'soft target relative weight')
 local opt = processArgs(cmd)
 assert(paths.filep(opt.teacher), 'Cannot find teacher model ' .. opt.teacher)
 assert(paths.filep(opt.student), 'Cannot find student model ' .. opt.student)
-
-local teacher = Model(opt.teacher)
-if #teacher.model:findModules('cudnn.SoftMax') ~= 0 or
-   #teacher.model:findModules('nn.SoftMax') ~= 0 then
-  teacher.model:remove()
-end
-if opt.teacher_processor ~= '' then
-  opt.teacher_processor = requirePath(opt.teacher_processor)(opt)
-  opt.teacher_processor.model = teacher
-end
 
 local student = Model(opt.student)
 local hasSoftmax = false
@@ -41,6 +32,19 @@ if #student.model:findModules('cudnn.SoftMax') ~= 0 or
 end
 opt.processor.model = student
 
+local teacher = Model(opt.teacher)
+if #teacher.model:findModules('cudnn.SoftMax') ~= 0 or
+   #teacher.model:findModules('nn.SoftMax') ~= 0 then
+  teacher.model:remove()
+end
+if opt.teacher_processor ~= '' then
+  if opt.teacher_processor_opts ~= '' then
+    opt.processor_opts = opt.teacher_processor_opts
+  end
+  opt.teacher_processor = requirePath(opt.teacher_processor)(opt)
+  opt.teacher_processor.model = teacher
+end
+
 local criterion = SoftCrossEntropyCriterion(opt.T)
 if nGPU > 0 then
   criterion = criterion:cuda()
@@ -49,7 +53,7 @@ end
 local function trainBatch(pathNames, student_inputs)
   local teacher_inputs = student_inputs
   if opt.teacher_processor ~= '' then
-    _, teacher_inputs = DataLoader.LoadInputs(pathNames, opt.teacher_processor.preprocessFn)
+    _, teacher_inputs = DataLoader.LoadInputs(pathNames, bind_post(opt.teacher_processor.preprocessFn, true))
   end
   local logits = teacher:forward(teacher_inputs, true)
   if opt.hintLayer ~= '' then
