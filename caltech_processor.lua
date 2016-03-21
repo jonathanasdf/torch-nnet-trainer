@@ -22,7 +22,7 @@ function M:__init(opt)
   end
 end
 
-function M.preprocess(path, opt)
+function M.preprocess(path, opt, isTraining)
   local img = cv.imread{path, cv.IMREAD_COLOR}:float():transpose(3, 1, 2)
   local mean_pixel = torch.FloatTensor{103.939, 116.779, 123.68}:view(3, 1, 1):expandAs(img)
   return image.scale(img - mean_pixel, opt.imageSize, opt.imageSize)
@@ -36,11 +36,15 @@ function M:getLabels(pathNames)
   return labels
 end
 
-local pos_correct = 0
-local neg_correct = 0
-local pos_total = 0
-local neg_total = 0
-function M:testBatch(pathNames, outputs)
+function M:resetStats()
+  self.pos_correct = 0
+  self.neg_correct = 0
+  self.pos_total = 0
+  self.neg_total = 0
+end
+
+function M:testBatch(pathNames, inputs)
+  local outputs = self.model:forward(inputs, true)
   local labels = self:getLabels(pathNames)
   local pred
 
@@ -57,23 +61,26 @@ function M:testBatch(pathNames, outputs)
 
   for i=1,#pathNames do
     if labels[i] == 2 then
-      pos_total = pos_total + 1
+      self.pos_total = self.pos_total + 1
       if pred[i] == labels[i] then
-        pos_correct = pos_correct + 1
+        self.pos_correct = self.pos_correct + 1
       end
     else
-      neg_total = neg_total + 1
+      self.neg_total = self.neg_total + 1
       if pred[i] == labels[i] then
-        neg_correct = neg_correct + 1
+        self.neg_correct = self.neg_correct + 1
       end
     end
   end
+
+  local loss = self.criterion:forward(outputs, labels)
+  return self.pos_correct + self.neg_correct, self.pos_total + self.neg_total, loss
 end
 
 function M:printStats()
-  print('Accuracy: ' .. (pos_correct + neg_correct) .. '/' .. (pos_total + neg_total) .. ' = ' .. ((pos_correct + neg_correct)*100.0/(pos_total + neg_total)) .. '%')
-  print('Positive Accuracy: ' .. pos_correct .. '/' .. pos_total .. ' = ' .. (pos_correct*100.0/pos_total) .. '%')
-  print('Negative Accuracy: ' .. neg_correct .. '/' .. neg_total .. ' = ' .. (neg_correct*100.0/neg_total) .. '%')
+  print('Accuracy: ' .. (self.pos_correct + self.neg_correct) .. '/' .. (self.pos_total + self.neg_total) .. ' = ' .. ((self.pos_correct + self.neg_correct)*100.0/(self.pos_total + self.neg_total)) .. '%')
+  print('Positive Accuracy: ' .. self.pos_correct .. '/' .. self.pos_total .. ' = ' .. (self.pos_correct*100.0/self.pos_total) .. '%')
+  print('Negative Accuracy: ' .. self.neg_correct .. '/' .. self.neg_total .. ' = ' .. (self.neg_correct*100.0/self.neg_total) .. '%')
 end
 
 return M

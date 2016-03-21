@@ -17,7 +17,7 @@ defineTrainingOptions(cmd) --defined in train.lua
 cmd:option('-teacher_processor', '', 'alternate processor for teacher model')
 cmd:option('-hintLayer', '', 'which hint layer to use. Defaults to last non-softmax layer')
 cmd:option('-T', 2, 'temperature')
-cmd:option('-lambda', 0.5, 'hard target relative weight')
+cmd:option('-lambda', 2, 'soft target relative weight')
 
 local opt = processArgs(cmd)
 assert(paths.filep(opt.teacher), 'Cannot find teacher model ' .. opt.teacher)
@@ -46,7 +46,7 @@ if nGPU > 0 then
   criterion = criterion:cuda()
 end
 
-local function trainBatch(student, pathNames, student_inputs)
+local function trainBatch(pathNames, student_inputs)
   local teacher_inputs = student_inputs
   if opt.teacher_processor ~= '' then
     _, teacher_inputs = DataLoader.LoadInputs(pathNames, opt.teacher_processor.preprocessFn)
@@ -63,7 +63,7 @@ local function trainBatch(student, pathNames, student_inputs)
   end
 
   criterion:forward(student_logits, logits)
-  local soft_grad_outputs = criterion:backward(student_logits, logits)*opt.T*opt.T
+  local soft_grad_outputs = criterion:backward(student_logits, logits)*opt.T*opt.T*opt.lambda
 
   if hasSoftmax then
     -- Assumes that model structure is Sequential(Sequential(everything_else)):add(SoftMax())
@@ -72,8 +72,8 @@ local function trainBatch(student, pathNames, student_inputs)
     student:backward(student_inputs, soft_grad_outputs)
   end
 
-  local hard_grad_outputs = opt.processor:evaluateBatch(pathNames, student_outputs)*opt.lambda
-  student:backward(student_inputs, hard_grad_outputs)
+  -- Hard labels
+  opt.processor:trainBatch(pathNames, student_inputs)
 end
 
 student:train(opt, trainBatch)

@@ -8,10 +8,10 @@ function M:__init(opt)
   CaltechProcessor.__init(self, opt)
 end
 
-function M.preprocess(path, opt)
+function M.preprocess(path, opt, isTraining)
   local CaltechProcessor = require 'caltech_processor'
   require 'features'
-  return hog_luv(CaltechProcessor.preprocess(path, opt))
+  return hog_luv(CaltechProcessor.preprocess(path, opt, isTraining))
 end
 
 return M

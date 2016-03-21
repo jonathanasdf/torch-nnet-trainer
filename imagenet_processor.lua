@@ -30,7 +30,7 @@ function M:__init(opt)
   end
 end
 
-function M.preprocess(path, opt)
+function M.preprocess(path, opt, isTraining)
   local img = image.load(path, 3)
 
   -- find the smaller dimension, and resize it to 256
@@ -67,11 +67,14 @@ function M:getLabels(pathNames)
   return labels
 end
 
-local top1 = 0
-local top5 = 0
-local total = 0
-local last_outputs
-function M:testBatch(pathNames, outputs)
+function M:resetStats()
+  self.top1 = 0
+  self.top5 = 0
+  self.total = 0
+end
+
+function M:testBatch(pathNames, inputs)
+  local outputs = self.model:forward(inputs, true)
   local labels = self:getLabels(pathNames)
 
   for i=1,#pathNames do
@@ -80,8 +83,8 @@ function M:testBatch(pathNames, outputs)
     for j=1,5 do
       local color = ''
       if classes[j] == labels[i] then
-        if j == 1 then top1 = top1 + 1 end
-        top5 = top5 + 1
+        if j == 1 then self.top1 = self.top1 + 1 end
+        self.top5 = self.top5 + 1
         color = '\27[33m'
       end
       result = result .. color .. '(' .. math.floor(prob[j]*100 + 0.5) .. '%) ' .. self.words[classes[j]] .. '\27[0m; '
@@ -91,13 +94,15 @@ function M:testBatch(pathNames, outputs)
     end
     --print(result)
 
-    total = total + 1
+    self.total = self.total + 1
   end
+  local loss = self.criterion:forward(outputs, labels)
+  return self.top5, self.total, loss
 end
 
 function M:printStats()
-  print('Top 1 accuracy: ' .. top1 .. '/' .. total .. ' = ' .. (top1*100.0/total) .. '%')
-  print('Top 5 accuracy: ' .. top5 .. '/' .. total .. ' = ' .. (top5*100.0/total) .. '%')
+  print('Top 1 accuracy: ' .. self.top1 .. '/' .. self.total .. ' = ' .. (self.top1*100.0/self.total) .. '%')
+  print('Top 5 accuracy: ' .. self.top5 .. '/' .. self.total .. ' = ' .. (self.top5*100.0/self.total) .. '%')
 end
 
 return M

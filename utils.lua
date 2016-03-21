@@ -1,10 +1,8 @@
 function defineBaseOptions(cmd)
   cmd:argument(
     '-processor',
-    'REQUIRED. lua file that preprocesses input and handles output. '
-    .. 'Functions that can be defined:\n'
-    .. '    -preprocess(img, opt): takes a single img and prepares it for the network\n'
-    .. '    -evaluateBatch(pathNames, outputs): returns (grad_outputs, loss, #correct)\n'
+    'REQUIRED. lua file that preprocesses input and handles output. ' ..
+    'See processor.lua for functions that can be defined.\n'
   )
   cmd:option('-processor_opts', '', 'additional options for the processor')
   cmd:option('-batchSize', 32, 'batch size')
@@ -71,8 +69,11 @@ function processArgs(cmd)
 end
 
 function requirePath(path)
-  package.path = package.path .. ';' .. paths.dirname(path) .. '/?.lua'
-  return require(paths.basename(path, 'lua'))
+  local oldPackagePath = package.path
+  package.path = paths.dirname(path) .. '/?.lua' .. ';' .. package.path
+  local M = require(paths.basename(path, 'lua'))
+  package.path = oldPackagePath
+  return M
 end
 
 function tablelength(T)
@@ -81,7 +82,8 @@ function tablelength(T)
   return count
 end
 
-function tableToBatchTensor(T) -- Assumes 3 dimensions
+-- Concatenates a table of tensors **of the same size** along a new dimension at the front
+function tableToBatchTensor(T)
   for k, v in pairs(T) do
     local sz = v:size():totable()
     table.insert(sz, 1, 1)

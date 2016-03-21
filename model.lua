@@ -63,7 +63,7 @@ local function trainBatch(model, trainFn, opt, pathNames, inputs)
     inputs = inputs:cuda()
   end
 
-  trainFn(model, pathNames, inputs)
+  trainFn(pathNames, inputs)
 
   opt.train_iter = opt.train_iter + 1
   if opt.train_iter % opt.update_every == 0 then
@@ -77,10 +77,10 @@ local function trainBatch(model, trainFn, opt, pathNames, inputs)
 end
 
 local function validBatch(model, processor, pathNames, inputs)
-  local _, loss, correct = processor:evaluateBatch(pathNames, model:forward(inputs, true))
-  model.valid_loss = model.valid_loss + loss
-  model.valid_acc = model.valid_acc + correct
-  model.valid_count = model.valid_count + #pathNames
+  local correct, total, loss = processor:testBatch(pathNames, inputs)
+  model.valid_acc = model.valid_acc + (correct or 0)
+  model.valid_count = model.valid_count + (total or 0)
+  model.valid_loss = model.valid_loss + (loss or 0)
 end
 
 function M:train(opt, trainFn)
@@ -127,19 +127,20 @@ function M:train(opt, trainFn)
     train_loader:runAsync(opt.batchSize,
                           opt.epochSize,
                           true, --shuffle
-                          opt.processor.preprocessFn,
+                          bind_post(opt.processor.preprocessFn, true),
                           trainFn)
 
     if opt.val ~= '' and epoch % opt.val_every == 0 then
       self.valid_count = 0
       self.valid_loss = 0
       self.valid_acc = 0
+      opt.processor:resetStats()
       valid_loader:runAsync(opt.batchSize,
                             opt.valSize,
                             false, --don't shuffle
-                            opt.processor.preprocessFn,
+                            bind_post(opt.processor.preprocessFn, false),
                             valFn)
-      self.valid_loss = self.valid_loss / (self.valid_count / opt.batchCount)
+      self.valid_loss = self.valid_loss / self.valid_count
       print(string.format('  Validation loss: %.6f', self.valid_loss))
       print(string.format('  Validation accuracy: %d / %d = %.6f%%', self.valid_acc, self.valid_count, self.valid_acc * 100.0 / self.valid_count))
     end
