@@ -109,9 +109,11 @@ function M:train(opt, trainFn)
 
   local signal = require("posix.signal")
   signal.signal(signal.SIGINT, function(signum)
-    self:save(opt.output .. '.interrupt')
-    opt.optimState.dfdx = nil
-    torch.save(opt.output .. '.interrupt.optimState', opt.optimState)
+    if opt.output and opt.output ~= '' then
+      self:save(opt.basename .. '.interrupt')
+      opt.optimState.dfdx = nil
+      torch.save(opt.basename .. '.interrupt.optimState', opt.optimState)
+    end
     os.exit(128 + signum)
   end)
 
@@ -144,15 +146,17 @@ function M:train(opt, trainFn)
     end
 
     if opt.cache_every ~= -1 and epoch % opt.cache_every == 0 and
-       opt.output and opt.output ~= '/dev/null' then
-      self:save(opt.output .. '.cached')
+       opt.output and opt.output ~= '' then
+      self:save(opt.basename .. '.cached')
       opt.optimState.dfdx = nil
-      torch.save(opt.output .. '.cached.optimState', opt.optimState)
+      torch.save(opt.basename .. '.cached.optimState', opt.optimState)
     end
   end
-  self:save(opt.output)
-  opt.optimState.dfdx = nil
-  torch.save(opt.output .. '.optimState', opt.optimState)
+  if opt.output and opt.output ~= '' then
+    self:save(opt.output)
+    opt.optimState.dfdx = nil
+    torch.save(opt.output .. '.optimState', opt.optimState)
+  end
 end
 
 function M:forward(inputs, deterministic)

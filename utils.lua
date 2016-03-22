@@ -42,6 +42,14 @@ function processArgs(cmd)
   opt.batchCount = opt.batchSize * opt.update_every
   if opt.LR then opt.LR = opt.LR / opt.batchCount end
 
+  if opt.output and opt.output ~= '' then
+    opt.basename = paths.dirname(opt.output) .. '/' .. paths.basename(opt.output, paths.extname(opt.output))
+    opt.logdir = opt.basename .. os.date("_%Y%m%d_%H%M%S/")
+    paths.mkdir(opt.logdir)
+    cmd:log(opt.logdir .. 'log.txt', opt)
+    cmd:addTime()
+  end
+
   torch.setnumthreads(opt.nThreads)
   local Threads = require 'threads'
   Threads.serialization('threads.sharedserialize')

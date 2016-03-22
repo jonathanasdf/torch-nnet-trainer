@@ -10,10 +10,11 @@ local Processor = require 'processor'
 local M = class('CaltechProcessor', 'Processor')
 
 local function defineSlidingWindowOptions(cmd)
-  cmd:option('-windowSizeX', 30, 'width of sliding window')
-  cmd:option('-windowSizeY', 50, 'height of sliding window')
-  cmd:option('-windowStrideX', 15, 'horizontal stride of sliding window')
-  cmd:option('-windowStrideY', 25, 'vertical stride of sliding window')
+  cmd:option('-windowSizeX', 40, 'width of sliding window')
+  cmd:option('-windowSizeY', 60, 'height of sliding window')
+  cmd:option('-windowStrideX', 20, 'horizontal stride of sliding window')
+  cmd:option('-windowStrideY', 30, 'vertical stride of sliding window')
+  cmd:option('-windowScales', 2, 'how many times to downscale window (0 = no downscaling)')
   cmd:option('-windowIOU', 0.5, 'what IOU to count as a positive example')
 end
 
@@ -69,53 +70,50 @@ local function slidingWindow(path, img, bboxes, opt)
   local ceil = math.ceil
 
   local sz = opt.imageSize
-  local sx = sz / opt.windowSizeX
-  local sy = sz / opt.windowSizeY
-  local dx = max(1, floor(opt.windowStrideX * sx))
-  local dy = max(1, floor(opt.windowStrideY * sy))
-  local w = ceil(img:size(3) * sx)
-  local h = ceil(img:size(2) * sy)
-  img = image.scale(img, w, h)
+  local sizex = opt.windowSizeX
+  local sizey = opt.windowSizeY
+  local sx = opt.windowStrideX
+  local sy = opt.windowStrideY
+  local w = img:size(3)
+  local h = img:size(2)
 
   local patches = {}
   local nPatches = 0
   local nCols = 0
-  for j=1,h-sz+1,dy do
-    for k=1,w-sz+1,dx do
+  for j=1,h-sizey+1,sy do
+    for k=1,w-sizex+1,sx do
       nPatches = nPatches+1
-      patches[nPatches] = img[{{}, {j, j+sz-1}, {k, k+sz-1}}]
+      patches[nPatches] = image.scale(img[{{}, {j, j+sizey-1}, {k, k+sizex-1}}], sz, sz)
       if j == 1 then nCols = nCols + 1 end
     end
   end
   patches = tableToBatchTensor(patches)
 
   local labels = torch.ones(nPatches)
-  local index = tonumber(paths.basename(path, 'png'))
-  if bboxes[index] and bboxes[index]:nElement() ~= 0 then
-    local SA = sz*sz
-    for i=1,bboxes[index]:size(1) do
-      local XB1 = bboxes[index][i][1] * sx
-      local XB2 = (bboxes[index][i][1]+bboxes[index][i][3]) * sx
-      local YB1 = bboxes[index][i][2] * sy
-      local YB2 = (bboxes[index][i][2]+bboxes[index][i][4]) * sy
-      local SB = bboxes[index][i][3]*bboxes[index][i][4]*sx*sy
+  if bboxes and bboxes:nElement() ~= 0 then
+    local SA = sizex*sizey
+    for i=1,bboxes:size(1) do
+      local XB1 = bboxes[i][1]
+      local XB2 = bboxes[i][1]+bboxes[i][3]
+      local YB1 = bboxes[i][2]
+      local YB2 = bboxes[i][2]+bboxes[i][4]
+      local SB = bboxes[i][3]*bboxes[i][4]
 
-      local left = max(0, ceil((XB1-sz)/dx))
-      local right = floor(XB2/dx)
-      local top = max(0, ceil((YB1-sz)/dy))
-      local bottom = floor(YB2/dy)
+      local left = max(0, ceil((XB1-sizex)/sx))
+      local right = floor(XB2/sx)
+      local top = max(0, ceil((YB1-sizey)/sy))
+      local bottom = floor(YB2/sy)
       for j=top,bottom do
         for k=left,right do
-          local XA1 = k*dx
-          local XA2 = k*dx+sz
-          local YA1 = j*dy
-          local YA2 = j*dy+sz
+          local XA1 = k*sx
+          local XA2 = k*sx+sizex
+          local YA1 = j*sy
+          local YA2 = j*sy+sizey
 
           local SI = max(0, min(XA2, XB2) - max(XA1, XB1)) *
                      max(0, min(YA2, YB2) - max(YA1, YB1))
           local SU = SA + SB - SI
-          -- TODO: actually use IOU
-          if SB > 225*sx*sy and SI/SB > opt.windowIOU then
+          if SI/SU > opt.windowIOU then
             labels[j*nCols+k+1] = 2
           end
         end
@@ -162,9 +160,11 @@ function M:testBatch(pathNames, inputs)
     end
   end
   for k=1,#pathNames do
-    threads:addjob(slidingWindow, forwardFn, pathNames[k], inputs[k],
-        self.bboxes[pathNames[k]:find('val') and 1 or 2], self.opt)
+    local bboxes = self.bboxes[pathNames[k]:find('val') and 1 or 2]
+    local index = tonumber(paths.basename(pathNames[k], 'png'))
+    threads:addjob(slidingWindow, forwardFn, pathNames[k], inputs[k], bboxes[index], self.opt)
   end
+  threads:synchronize()
   return loss, self.pos_total + self.neg_total
 end
 
