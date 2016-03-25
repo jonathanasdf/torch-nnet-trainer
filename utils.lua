@@ -1,13 +1,14 @@
 function defineBaseOptions(cmd)
   cmd:argument(
     '-processor',
-    'REQUIRED. lua file that preprocesses input and handles output. ' ..
+    'REQUIRED. lua file that does the heavy lifting. ' ..
     'See processor.lua for functions that can be defined.\n'
   )
   cmd:option('-processor_opts', '', 'additional options for the processor')
   cmd:option('-batchSize', 32, 'batch size')
   cmd:option('-epochSize', -1, 'num batches per epochs. -1 means run all available data once')
-  cmd:option('-nThreads', 8, 'number of threads')
+  cmd:option('-nThreads', 4, 'number of worker threads')
+  cmd:option('-replicateModel', false, 'Replicate model across threads? Speeds up everything, but takes more memory')
   cmd:option('-nGPU', 1, 'number of GPU to use. Set to -1 to use CPU')
 end
 
@@ -19,42 +20,65 @@ function defineTrainingOptions(cmd)
   cmd:option('-update_every', 1, 'update model with sgd every n batches')
   cmd:option('-cache_every', 20, 'save model every n epochs. Set to -1 or a value >epochs to disable')
   cmd:option('-val', '', 'validation data')
+  cmd:option('-valBatchSize', -1, 'batch size for validation')
   cmd:option('-valSize', -1, 'num batches to validate. -1 means run all available data once')
   cmd:option('-val_every', 20, 'run validation every n epochs')
-  cmd:option('-noUseDataParallelTable', false, 'dont create model using DataParallelTable (only applies to .lua models)')
   cmd:option('-optimState', '', 'optimState to resume from')
 end
 
 function processArgs(cmd)
-  local opt = cmd:parse(arg or {})
-  if opt.nGPU == 0 then
+  torch.setdefaulttensortype('torch.FloatTensor')
+  opts = cmd:parse(arg or {})
+  if opts.nGPU == 0 then
     error('nGPU should not be 0. Please set nGPU to -1 if you want to use CPU.')
   end
-  if opt.nGPU == -1 then opt.nGPU = 0 end
-  nGPU = opt.nGPU
-  noUseDataParallelTable = opt.noUseDataParallelTable
+  if opts.nGPU == -1 then opts.nGPU = 0 end
+  nGPU = opts.nGPU
 
-  if opt.batchSize <= 1 then
+  if opts.nThreads < math.max(1, opts.nGPU-1) then
+    error('nThreads < max(1, nGPU-1).')
+  end
+  if opts.nThreads > math.max(1, opts.nGPU) then
+    print('\27[31mThere is currently a bug when nThreads > nGPU. Setting nThreads to nGPU.\27[0m')
+    opts.nThreads = math.max(1, opts.nGPU)
+  end
+  nThreads = opts.nThreads
+
+  if opts.batchSize <= 1 then
     error('Sorry, this framework only supports batchSize > 1.')
   end
+  if opts.valBatchSize then
+    if opts.valBatchSize == -1 then
+      opts.valBatchSize = opts.batchSize
+    end
+    if opts.valBatchSize <= 1 then
+      error('Sorry, this framework only supports valBatchSize > 1.')
+    end
+  end
 
-  if not opt.update_every then opt.update_every = 1 end
-  opt.batchCount = opt.batchSize * opt.update_every
-  if opt.LR then opt.LR = opt.LR / opt.batchCount end
+  if not opts.update_every then opts.update_every = 1 end
+  opts.batchCount = opts.batchSize * opts.update_every
+  if opts.LR then opts.LR = opts.LR / opts.batchCount end
 
-  if opt.output and opt.output ~= '' then
-    opt.basename = paths.dirname(opt.output) .. '/' .. paths.basename(opt.output, paths.extname(opt.output))
-    opt.logdir = opt.basename .. os.date("_%Y%m%d_%H%M%S/")
-    paths.mkdir(opt.logdir)
-    cmd:log(opt.logdir .. 'log.txt', opt)
+  if opts.output and opts.output ~= '' then
+    opts.basename = paths.dirname(opts.output) .. '/' .. paths.basename(opts.output, paths.extname(opts.output))
+    opts.logdir = opts.basename .. os.date("_%Y%m%d_%H%M%S/")
+    paths.mkdir(opts.logdir)
+    cmd:log(opts.logdir .. 'log.txt', opts)
     cmd:addTime()
   end
 
-  torch.setnumthreads(opt.nThreads)
+  if opts.processor == '' then
+    error('A processor must be supplied.')
+  end
+  local processor_path = opts.processor
+  opts.processor = requirePath(opts.processor).new()
+
+  local opt = opts
+  torch.setnumthreads(opts.nThreads)
   local Threads = require 'threads'
   Threads.serialization('threads.sharedserialize')
-  threads = Threads(
-    opt.nThreads,
+  threads = Threads(opts.nThreads,
     function()
       package.path = package.path .. ';/home/jshen/scripts/?.lua'
       package.path = package.path .. ';/home/nvesdapu/opencv/?.lua'
@@ -64,21 +88,51 @@ function processArgs(cmd)
       require 'cunn'
       require 'cudnn'
       cv = require 'cv'
+      require 'cv.cudawarping'
       require 'cv.imgcodecs'
       require 'dpnn'
       require 'fbnn'
       require 'image'
+      require 'model'
       require 'paths'
       require 'utils'
+      requirePath(processor_path)
+
+      local min = math.min
+      local max = math.max
+      local floor = math.floor
+      local ceil = math.ceil
+    end,
+    function()
+      opts = opt
+      nGPU = opts.nGPU
+      nThreads = opts.nThreads
     end
   )
+end
 
-  if opt.processor == '' then
-    error('A processor must be supplied.')
+function augmentThreadState(...)
+  local specific = threads:specific()
+  threads:specific(true)
+  local funcs = {...}
+  for j=1,#funcs do
+    for i=1,nThreads do
+      threads:addjob(i, funcs[j])
+    end
   end
-  opt.processor = requirePath(opt.processor)(opt)
+  threads:specific(specific)
+end
 
-  return opt
+local jobsDone, jobSize
+function startJobs(count)
+  jobsDone = 0
+  jobSize = count
+  xlua.progress(jobsDone, jobSize)
+end
+
+function jobDone()
+  jobsDone = jobsDone + 1
+  xlua.progress(jobsDone, jobSize)
 end
 
 function requirePath(path)
@@ -95,12 +149,18 @@ function tablelength(T)
   return count
 end
 
+function cat(T, dim)
+  local out = torch.Tensor():typeAs(T[1])
+  torch.cat(out, T, dim)
+  return out
+end
+
 -- Concatenates a table of tensors **of the same size** along a new dimension at the front
 function tableToBatchTensor(T)
   for i=1,#T do
     T[i] = nn.utils.addSingletonDimension(T[i])
   end
-  return torch.cat(T, 1)
+  return cat(T, 1)
 end
 
 local RGB_BGR = torch.LongTensor{3,2,1}
@@ -124,9 +184,9 @@ function cvImgToTensor(I)
   end
 end
 
-function convertTensorToSVMLight(labels, tensor, append)
+function convertTensorToSVMLight(labels, tensor)
   assert(tensor:size(1) == labels:nElement())
-  local data = append or {}
+  local data = {}
   for i=1,tensor:size(1) do
     local values = tensor[i]:view(-1):float()
     local indices = torch.range(1, values:nElement()):int()
@@ -142,21 +202,24 @@ function string:split(sep)
   return fields
 end
 
-local class = require 'class'
 function findModuleByName(model, name)
-  if class.istype(model, 'Model') then
+  if torch.isTypeOf(model, 'Model') then
     return findModuleByName(model.model, name)
   end
-  for i=1,#model.modules do
-    if model.modules[i].name == name then
-      return model.modules[i]
+  if model.modules then
+    for i=1,#model.modules do
+      local recur = findModuleByName(model.modules[i], name)
+      if recur then return recur end
+      if model.modules[i].name == name then
+        return model.modules[i]
+      end
     end
   end
   return nil
 end
 
 function printOutputSizes(model)
-  if class.istype(model, 'Model') then
+  if torch.isTypeOf(model, 'Model') then
     printOutputSizes(model.model)
     return
   end

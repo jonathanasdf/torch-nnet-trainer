@@ -1,5 +1,4 @@
 package.path = package.path .. ';/home/jshen/scripts/?.lua'
-torch.setdefaulttensortype('torch.FloatTensor')
 
 require 'model'
 require 'dataLoader'
@@ -8,18 +7,25 @@ local cmd = torch.CmdLine()
 cmd:argument('-model', 'model to load')
 cmd:argument('-input', 'input file or folder')
 defineBaseOptions(cmd)     --defined in utils.lua
+processArgs(cmd)
 
-local opt = processArgs(cmd)
-assert(paths.filep(opt.model), 'Cannot find model ' .. opt.model)
+assert(paths.filep(opts.model), 'Cannot find model ' .. opts.model)
 
-local model = Model(opt.model)
-opt.processor.model = model
+local model = Model(opts.model)
+opts.processor.model = model
+opts.processor:initializeThreads()
 
-opt.processor:resetStats()
-DataLoader{path = opt.input}:runAsync(
-  opt.batchSize,
-  opt.epochSize,
+local function accResults(loss, cnt, ...)
+  opts.processor:accStats(...)
+  jobDone()
+end
+
+opts.processor:resetStats()
+DataLoader{path = opts.input}:runAsync(
+  opts.batchSize,
+  opts.epochSize,
   true,          -- shuffle,
-  bind_post(opt.processor.preprocessFn, false),
-  bind(opt.processor.testBatch, opt.processor))
-opt.processor:printStats()
+  bind_post(opts.processor.preprocessFn, false),
+  opts.processor.test,
+  accResults)
+opts.processor:printStats()

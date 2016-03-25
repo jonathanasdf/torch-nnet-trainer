@@ -1,29 +1,37 @@
-local class = require 'class'
-cv = require 'cv'
-require 'cv.imgcodecs'
 require 'fbnn'
 matio = require 'matio'
 require 'svm'
 
 local Processor = require 'processor'
-
-local M = class('CaltechProcessor', 'Processor')
+local M = torch.class('CaltechProcessor', 'Processor')
 
 local function defineSlidingWindowOptions(cmd)
-  cmd:option('-windowSizeX', 40, 'width of sliding window')
-  cmd:option('-windowSizeY', 60, 'height of sliding window')
-  cmd:option('-windowStrideX', 20, 'horizontal stride of sliding window')
-  cmd:option('-windowStrideY', 30, 'vertical stride of sliding window')
+  cmd:option('-windowSizeX', 30, 'width of sliding window')
+  cmd:option('-windowSizeY', 50, 'height of sliding window')
+  cmd:option('-windowStrideX', 15, 'horizontal stride of sliding window')
+  cmd:option('-windowStrideY', 25, 'vertical stride of sliding window')
   cmd:option('-windowScales', 2, 'how many times to downscale window (0 = no downscaling)')
+  cmd:option('-windowDownscaling', 0.75, 'what percent to downscale window')
   cmd:option('-windowIOU', 0.5, 'what IOU to count as a positive example')
 end
 
-function M:__init(opt)
+function M:__init()
   self.cmd:option('-imageSize', 113, 'What to resize to.')
   self.cmd:option('-svm', '', 'SVM to use')
   self.cmd:option('-layer', 'fc7', 'layer to use as SVM input')
   defineSlidingWindowOptions(self.cmd)
-  Processor.__init(self, opt)
+  Processor.__init(self)
+
+  self.processor_opts.mean_pixel = {}
+  self.processor_opts.mean_pixel[1] = torch.Tensor{103.939, 116.779, 123.68}:view(1, 1, 3)
+  if nGPU > 0 then
+    self.processor_opts.mean_pixel[1] = self.processor_opts.mean_pixel[1]:cuda()
+    for i=2,nGPU do
+      cutorch.setDevice(i)
+      self.processor_opts.mean_pixel[i] = self.processor_opts.mean_pixel[1]:clone()
+    end
+    cutorch.setDevice(1)
+  end
 
   self.bboxes = {
     matio.load('/file/caltech/val/box.mat', 'box'),
@@ -38,22 +46,70 @@ function M:__init(opt)
   end
 end
 
-function M.preprocess(path, isTraining, opt)
-  local img = cv.imread{path, cv.IMREAD_COLOR}:float():permute(3, 1, 2)
-  local mean_pixel = torch.FloatTensor{103.939, 116.779, 123.68}:view(3, 1, 1):expandAs(img)
-  img = img - mean_pixel
-  if isTraining then
-    img = image.scale(img, opt.imageSize, opt.imageSize)
-  end
-  return img
+function M:initializeThreads()
+  augmentThreadState(function()
+    require 'svm'
+  end)
+  Processor.initializeThreads(self)
 end
 
-function M:getLabels(pathNames)
+function M.preprocess(path, isTraining, processor_opts)
+  local img = cv.imread{path, cv.IMREAD_COLOR}:float()
+  if nGPU > 0 then
+    img = img:cuda()
+  end
+  if isTraining and (img:size(1) ~= processor_opts.imageSize or img:size(2) ~= processor_opts.imageSize) then
+    if nGPU > 0 then
+      img = cv.cuda.resize{img, {processor_opts.imageSize, processor_opts.imageSize}}
+    else
+      img = img:permute(3, 1, 2)
+      img = image.scale(img, processor_opts.imageSize, processor_opts.imageSize)
+      img = img:permute(2, 3, 1)
+    end
+  end
+  return img:csub(processor_opts.mean_pixel[gpu]:expandAs(img)):permute(3, 1, 2)
+end
+
+function M.getLabels(pathNames)
   local labels = torch.Tensor(#pathNames)
+  if nGPU > 0 then labels = labels:cuda() end
   for i=1,#pathNames do
     labels[i] = pathNames[i]:find('neg') and 1 or 2
   end
   return labels
+end
+
+function M.calcStats(pathNames, outputs, labels)
+  local pred
+  if processor.processor_opts.svm == '' then
+    _, pred = torch.max(outputs, 2)
+    pred = pred:squeeze()
+  else
+    if not(processor.processor_opts.svm_model) then
+      processor.processor_opts.svm_model = torch.load(processor.processor_opts.svm)
+    end
+    local data = convertTensorToSVMLight(labels, outputs)
+    pred = liblinear.predict(data, processor.processor_opts.svm_model, '-q')
+  end
+
+  local pos_correct = 0
+  local neg_correct = 0
+  local pos_total = 0
+  local neg_total = 0
+  for i=1,labels:size(1) do
+    if labels[i] == 2 then
+      pos_total = pos_total + 1
+      if pred[i] == 2 then
+        pos_correct = pos_correct + 1
+      end
+    else
+      neg_total = neg_total + 1
+      if pred[i] == 1 then
+        neg_correct = neg_correct + 1
+      end
+    end
+  end
+  return pos_correct, neg_correct, pos_total, neg_total
 end
 
 function M:resetStats()
@@ -63,34 +119,62 @@ function M:resetStats()
   self.neg_total = 0
 end
 
-local function slidingWindow(path, img, bboxes, opt)
+function M:accStats(...)
+  a, b, c, d = ...
+  self.pos_correct = self.pos_correct + a
+  self.neg_correct = self.neg_correct + b
+  self.pos_total = self.pos_total + c
+  self.neg_total = self.neg_total + d
+end
+
+function M:printStats()
+  print('  Accuracy: ' .. (self.pos_correct + self.neg_correct) .. '/' .. (self.pos_total + self.neg_total) .. ' = ' .. ((self.pos_correct + self.neg_correct)*100.0/(self.pos_total + self.neg_total)) .. '%')
+  print('  Positive Accuracy: ' .. self.pos_correct .. '/' .. self.pos_total .. ' = ' .. (self.pos_correct*100.0/self.pos_total) .. '%')
+  print('  Negative Accuracy: ' .. self.neg_correct .. '/' .. self.neg_total .. ' = ' .. (self.neg_correct*100.0/self.neg_total) .. '%')
+end
+
+local function findSlidingWindows(path, img, bboxes, scale)
   local min = math.min
   local max = math.max
   local floor = math.floor
   local ceil = math.ceil
 
-  local sz = opt.imageSize
-  local sizex = opt.windowSizeX
-  local sizey = opt.windowSizeY
-  local sx = opt.windowStrideX
-  local sy = opt.windowStrideY
-  local w = img:size(3)
+  local sz = processor.processor_opts.imageSize
+  local sizex = ceil(processor.processor_opts.windowSizeX * scale)
+  local sizey = ceil(processor.processor_opts.windowSizeY * scale)
+  local sx = max(1, floor(processor.processor_opts.windowStrideX * scale))
+  local sy = max(1, floor(processor.processor_opts.windowStrideY * scale))
   local h = img:size(2)
+  local w = img:size(3)
+  local c = img:size(1)
+  if img.getDevice then
+    img = img:permute(2, 3, 1)
+  end
 
+  local nPatches = ceil((h-sizey+1)/sy)*ceil((w-sizex+1)/sx)
   local patches = {}
-  local nPatches = 0
+
+  local count = 0
   local nCols = 0
   for j=1,h-sizey+1,sy do
     for k=1,w-sizex+1,sx do
-      nPatches = nPatches+1
-      patches[nPatches] = image.scale(img[{{}, {j, j+sizey-1}, {k, k+sizex-1}}], sz, sz)
+      count = count + 1
       if j == 1 then nCols = nCols + 1 end
+      if img.getDevice then
+        assert(c == 3)
+        local window = img[{{j, j+sizey-1}, {k, k+sizex-1}}]:clone()
+        patches[count] = cv.cuda.resize{window, {sz, sz}}:permute(3, 1, 2)
+      else
+        patches[count] = image.scale(img[{{}, {j, j+sizey-1}, {k, k+sizex-1}}], sz, sz)
+      end
     end
   end
+  assert(count == nPatches)
   patches = tableToBatchTensor(patches)
+  if nGPU > 0 and not(patches.getDevice) then patches = patches:cuda() end
 
   local labels = torch.ones(nPatches)
-  if bboxes and bboxes:nElement() ~= 0 then
+  if bboxes:nElement() ~= 0 then
     local SA = sizex*sizey
     for i=1,bboxes:size(1) do
       local XB1 = bboxes[i][1]
@@ -113,7 +197,7 @@ local function slidingWindow(path, img, bboxes, opt)
           local SI = max(0, min(XA2, XB2) - max(XA1, XB1)) *
                      max(0, min(YA2, YB2) - max(YA1, YB1))
           local SU = SA + SB - SI
-          if SI/SU > opt.windowIOU then
+          if SI/SU > processor.processor_opts.windowIOU then
             labels[j*nCols+k+1] = 2
           end
         end
@@ -123,55 +207,49 @@ local function slidingWindow(path, img, bboxes, opt)
   return patches, labels
 end
 
-local min = math.min
-function M:testBatch(pathNames, inputs)
-  local loss = 0
-  local forwardFn = function(patches, labels)
-    for i=1,labels:size(1),self.opt.batchSize do
-      local j = min(i+self.opt.batchSize-1, labels:size(1))
-      local outputs = self.model:forward(patches[{{i,j}}], true)
-
-      local pred
-      if self.opt.svm == '' then
-        _, pred = torch.max(outputs, 2)
-        pred = pred:squeeze()
-      else
-        if not(self.svm_model) then
-          self.svm_model = torch.load(self.opt.svm)
-        end
-        local data = convertTensorToSVMLight(labels[{{i,j}}], findModuleByName(self.model, self.opt.layer).output)
-        pred = liblinear.predict(data, self.svm_model, '-q')
-      end
-
-      for k=1,j-i do
-        if labels[k+i] == 2 then
-          self.pos_total = self.pos_total + 1
-          if pred[k] == 2 then
-            self.pos_correct = self.pos_correct + 1
-          end
-        else
-          self.neg_total = self.neg_total + 1
-          if pred[k] == 1 then
-            self.neg_correct = self.neg_correct + 1
-          end
-        end
-      end
-      loss = loss + self.criterion:forward(outputs, labels[{{i,j}}])
+function M.forward(inputs, deterministic)
+  if not(deterministic) then
+    return model:forward(inputs)
+  else
+    --print(#inputs)
+    local outputs = model:forward(inputs, true)
+    --print(#outputs)
+    if processor.processor_opts.svm ~= '' then
+      outputs = findModuleByName(model, processor.processor_opts.layer).output
     end
+    return outputs
   end
-  for k=1,#pathNames do
-    local bboxes = self.bboxes[pathNames[k]:find('val') and 1 or 2]
-    local index = tonumber(paths.basename(pathNames[k], 'png'))
-    threads:addjob(slidingWindow, forwardFn, pathNames[k], inputs[k], bboxes[index], self.opt)
-  end
-  threads:synchronize()
-  return loss, self.pos_total + self.neg_total
 end
 
-function M:printStats()
-  print('  Accuracy: ' .. (self.pos_correct + self.neg_correct) .. '/' .. (self.pos_total + self.neg_total) .. ' = ' .. ((self.pos_correct + self.neg_correct)*100.0/(self.pos_total + self.neg_total)) .. '%')
-  print('  Positive Accuracy: ' .. self.pos_correct .. '/' .. self.pos_total .. ' = ' .. (self.pos_correct*100.0/self.pos_total) .. '%')
-  print('  Negative Accuracy: ' .. self.neg_correct .. '/' .. self.neg_total .. ' = ' .. (self.neg_correct*100.0/self.neg_total) .. '%')
+function M.test(pathNames, inputs)
+  local aggLoss = 0
+  local aggTotal = 0
+  local aggStats = {}
+  local nInputs = #pathNames
+  for i=1,nInputs do
+    local path = pathNames[i]
+    local bboxes = processor.bboxes[path:find('val') and 1 or 2]
+    local index = tonumber(paths.basename(path, 'png'))
+    local scale = 1
+    for s=0,processor.processor_opts.windowScales do
+      local patches, labels = findSlidingWindows(path, inputs[i], bboxes[index], scale)
+      local nPatches = labels:size(1)
+      for j=1,nPatches,opts.batchSize do
+        local k = j+opts.batchSize-1
+        if k > nPatches then k = nPatches end
+        local res = {processor.testWithLabels(nil, patches[{{j, k}}], labels[{{j, k}}])}
+        aggLoss = aggLoss + res[1]
+        aggTotal = aggTotal + res[2]
+        for l=1,#res-2 do
+          if not(aggStats[l]) then aggStats[l] = 0 end
+          aggStats[l] = aggStats[l] + res[l+2]
+        end
+      end
+      scale = scale * processor.processor_opts.windowDownscaling
+    end
+  end
+  collectgarbage()
+  return aggLoss, aggTotal, unpack(aggStats)
 end
 
 return M

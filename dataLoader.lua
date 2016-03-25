@@ -93,7 +93,7 @@ function DataLoader:sample(quantity)
   return self:retrieve(indices)
 end
 
-function DataLoader:get(start, end_incl, source)
+function DataLoader:get(start, end_incl, perm)
   local indices
   if type(start) == 'number' then
     if type(end_incl) == 'number' then -- range of indices
@@ -109,22 +109,27 @@ function DataLoader:get(start, end_incl, source)
   else
     error('Unsupported input types: ' .. type(start) .. ' ' .. type(end_incl))
   end
-  if source then
-    indices = source:index(1, indices:long())
+  if perm then
+    indices = perm:index(1, indices:long())
   end
   return self:retrieve(indices)
 end
 
-function DataLoader.LoadInputs(pathNames, preprocessFn)
+function DataLoader.loadInputs(pathNames, preprocessFn, workerFn)
   collectgarbage()
   local inputs = {}
   for j=1,#pathNames do
     inputs[#inputs+1] = preprocessFn(pathNames[j])
   end
-  return pathNames, tableToBatchTensor(inputs)
+  inputs = tableToBatchTensor(inputs)
+  if workerFn then
+    return workerFn(pathNames, inputs)
+  else
+    return pathNames, inputs
+  end
 end
 
-function DataLoader:runAsync(batchSize, epochSize, shuffle, preprocessFn, resultHandler)
+function DataLoader:runAsync(batchSize, epochSize, shuffle, preprocessFn, workerFn, resultHandler)
   if batchSize == -1 then
     batchSize = self:size()
   end
@@ -134,24 +139,17 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, preprocessFn, result
   end
   epochSize = min(epochSize, ceil(self:size() * 1.0 / batchSize))
 
-  local jobsDone = 0
-  xlua.progress(jobsDone, epochSize)
-
-  local doneFn = function(pathNames, inputs)
-    resultHandler(pathNames, inputs)
-    jobsDone = jobsDone + 1
-    xlua.progress(jobsDone, epochSize)
-  end
-
   local perm = self.shuffle
   if shuffle then
     perm = torch.randperm(self:size())
   end
+
+  startJobs(epochSize)
   for i=1,epochSize do
     local indexStart = (i-1) * batchSize + 1
     local indexEnd = (indexStart + batchSize - 1)
     local pathNames = self:get(indexStart, indexEnd, perm)
-    threads:addjob(self.LoadInputs, doneFn, pathNames, preprocessFn)
+    threads:addjob(self.loadInputs, resultHandler, pathNames, preprocessFn, workerFn)
   end
   threads:synchronize()
 end

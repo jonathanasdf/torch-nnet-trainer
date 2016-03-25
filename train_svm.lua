@@ -1,5 +1,4 @@
 package.path = package.path .. ';/home/jshen/scripts/?.lua'
-torch.setdefaulttensortype('torch.FloatTensor')
 
 require 'svm'
 
@@ -14,29 +13,39 @@ cmd:argument('-output', 'path to save trained model')
 --defined in utils.lua
 defineBaseOptions(cmd)
 cmd:option('-layer', 'fc7', 'layer to train svm from')
--- Additional processor functions:
---   -getLabels(pathNames): return labels for examples
+processArgs(cmd)
 
-local opt = processArgs(cmd)
-assert(paths.filep(opt.model), 'Cannot find model ' .. opt.model)
+assert(paths.filep(opts.model), 'Cannot find model ' .. opts.model)
 
-local model = Model(opt.model)
-local class = require 'class'
-local data = {}
+local model = Model(opts.model)
+opts.processor.model = model
+opts.processor:initializeThreads()
 
-local function accumulateData(pathNames, inputs)
-  local labels = opt.processor:getLabels(pathNames)
+local function getData(pathNames, inputs)
+  local labels = opts.processor.getLabels(pathNames)
 
+  mutex:lock()
   model:forward(inputs, true)
-  local outputs = findModuleByName(model, opt.layer).output
-  convertTensorToSVMLight(labels, outputs, data)
+  local outputs = findModuleByName(model, opts.layer).output:clone()
+  mutex:unlock()
+
+  return convertTensorToSVMLight(labels, outputs)
 end
 
-DataLoader{path = opt.input}:runAsync(opt.batchSize,
-           opt.epochSize,
-           true,           -- shuffle,
-           bind_post(opt.processor.preprocessFn, true),
-           accumulateData) -- resultHandler
+local data = {}
+local function accumulateData(arr)
+  for i=1,#arr do
+    data[#data+1] = arr[i]
+  end
+end
+
+DataLoader{path = opts.input}:runAsync(
+  opts.batchSize,
+  opts.epochSize,
+  true,           -- shuffle,
+  bind_post(opts.processor.preprocessFn, true),
+  getData,
+  accumulateData)
 
 local svm_model = liblinear.train(data, '-s 2 -B 1')
-torch.save(opt.output, svm_model)
+torch.save(opts.output, svm_model)

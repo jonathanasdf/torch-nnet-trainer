@@ -1,12 +1,22 @@
-local class = require 'class'
 require 'fbnn'
 local Processor = require 'processor'
+local M = torch.class('ImageNetProcessor', 'Processor')
 
-local M = class('ImageNetProcessor', 'Processor')
-
-function M:__init(opt)
+function M:__init()
   self.cmd:option('-cropSize', 224, 'What size to crop to.')
-  Processor.__init(self, opt)
+  Processor.__init(self)
+
+  assert(self.processor_opts.cropSize <= 256)
+  self.processor_opts.mean_pixel = {}
+  self.processor_opts.mean_pixel[1] = torch.Tensor{103.939, 116.779, 123.68}:view(1, 1, 3)
+  if nGPU > 0 then
+    self.processor_opts.mean_pixel[1] = self.processor_opts.mean_pixel[1]:cuda()
+    for i=2,nGPU do
+      cutorch.setDevice(i)
+      self.processor_opts.mean_pixel[i] = self.processor_opts.mean_pixel[1]:clone()
+    end
+    cutorch.setDevice(1)
+  end
 
   self.words = {}
   self.lookup = {}
@@ -30,41 +40,75 @@ function M:__init(opt)
   end
 end
 
-function M.preprocess(path, isTraining, opt)
-  local img = image.load(path, 3)
-
-  -- find the smaller dimension, and resize it to 256
-  if img:size(3) < img:size(2) then
-     img = image.scale(img, 256, 256 * img:size(2) / img:size(3))
-  else
-     img = image.scale(img, 256 * img:size(3) / img:size(2), 256)
+function M.preprocess(path, isTraining, processor_opts)
+  local img = cv.imread{path, cv.IMREAD_COLOR}:float()
+  if nGPU > 0 then
+    img = img:cuda()
   end
 
-  local iW = img:size(3)
-  local iH = img:size(2)
-  local w1 = math.ceil((iW-opt.cropSize)/2)
-  local h1 = math.ceil((iH-opt.cropSize)/2)
-  img = image.crop(img, w1, h1, w1+opt.cropSize, h1+opt.cropSize) -- center patch
-  local mean_pixel = torch.FloatTensor({103.939, 116.779, 123.68})
-  local perm = torch.LongTensor{3, 2, 1}
-  img = img:index(1, perm):mul(255.0)
-  mean_pixel = mean_pixel:view(3, 1, 1):expandAs(img)
-  img:add(-1, mean_pixel)
-  return img
+  -- find the smaller dimension, and resize it to 256
+  if nGPU > 0 then
+    if img:size(2) < img:size(1) then
+      img = cv.cuda.resize{img, {256 * img:size(1) / img:size(2), 256}}
+    else
+      img = cv.cuda.resize{img, {256, 256 * img:size(2) / img:size(1)}}
+    end
+  else
+    img = img:permute(3, 1, 2)
+    if img:size(3) < img:size(2) then
+      img = image.scale(img, 256, 256 * img:size(2) / img:size(3))
+    else
+      img = image.scale(img, 256 * img:size(3) / img:size(2), 256)
+    end
+    img = img:permute(2, 3, 1)
+  end
+
+  local sz = processor_opts.cropSize
+  local iW = img:size(2)
+  local iH = img:size(1)
+  local w1 = math.ceil((iW-sz)/2)
+  local h1 = math.ceil((iH-sz)/2)
+  img = img[{{h1, h1+sz-1}, {w1, w1+sz-1}}] -- center patch
+  return img:csub(processor_opts.mean_pixel[gpu]:expandAs(img)):permute(3, 1, 2)
 end
 
-function M:getLabels(pathNames)
-  local labels = torch.Tensor(#pathNames):fill(-1)
+function M.getLabels(pathNames)
+  local labels = torch.Tensor(#pathNames)
+  if nGPU > 0 then labels = labels:cuda() end
   for i=1,#pathNames do
     local name = pathNames[i]
     local filename = paths.basename(name)
     if name:find('train') then
-      labels[i] = self.lookup[string.sub(filename, 1, 9)]
-    elseif name:find('val') then
-      labels[i] = self.val[tonumber(string.sub(filename, -12, -5))]
+      labels[i] = processor.lookup[string.sub(filename, 1, 9)]
+    else
+      assert(name:find('val'))
+      labels[i] = processor.val[tonumber(string.sub(filename, -12, -5))]
     end
   end
   return labels
+end
+
+function M.calcStats(pathNames, outputs, labels)
+  local top1 = 0
+  local top5 = 0
+  for i=1,#pathNames do
+    local prob, classes = (#pathNames == 1 and outputs or outputs[i]):view(-1):sort(true)
+    local result = 'predicted classes for ' .. paths.basename(pathNames[i]) .. ': '
+    for j=1,5 do
+      local color = ''
+      if classes[j] == labels[i] then
+        if j == 1 then top1 = top1 + 1 end
+        top5 = top5 + 1
+        color = '\27[33m'
+      end
+      result = result .. color .. '(' .. math.floor(prob[j]*100 + 0.5) .. '%) ' .. processor.words[classes[j]] .. '\27[0m; '
+    end
+    if labels[i] ~= -1 then
+      result = result .. '\27[36mground truth: ' .. processor.words[labels[i]] .. '\27[0m'
+    end
+    --print(result)
+  end
+  return top1, top5, #pathNames
 end
 
 function M:resetStats()
@@ -73,31 +117,11 @@ function M:resetStats()
   self.total = 0
 end
 
-function M:testBatch(pathNames, inputs)
-  local outputs = self.model:forward(inputs, true)
-  local labels = self:getLabels(pathNames)
-
-  for i=1,#pathNames do
-    local prob, classes = (#pathNames == 1 and outputs or outputs[i]):view(-1):sort(true)
-    local result = 'predicted classes for ' .. paths.basename(pathNames[i]) .. ': '
-    for j=1,5 do
-      local color = ''
-      if classes[j] == labels[i] then
-        if j == 1 then self.top1 = self.top1 + 1 end
-        self.top5 = self.top5 + 1
-        color = '\27[33m'
-      end
-      result = result .. color .. '(' .. math.floor(prob[j]*100 + 0.5) .. '%) ' .. self.words[classes[j]] .. '\27[0m; '
-    end
-    if labels[i] ~= -1 then
-      result = result .. '\27[36mground truth: ' .. self.words[labels[i]] .. '\27[0m'
-    end
-    --print(result)
-
-    self.total = self.total + 1
-  end
-  local loss = self.criterion:forward(outputs, labels)
-  return loss, self.total
+function M:accStats(...)
+  a, b, c = ...
+  self.top1 = self.top1 + a
+  self.top5 = self.top5 + b
+  self.total = self.total + c
 end
 
 function M:printStats()

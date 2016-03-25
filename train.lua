@@ -1,5 +1,4 @@
 package.path = package.path .. ';/home/jshen/scripts/?.lua'
-torch.setdefaulttensortype('torch.FloatTensor')
 
 require 'model'
 require 'paths'
@@ -12,11 +11,12 @@ cmd:argument('-output', 'path to save trained model')
 --defined in utils.lua
 defineBaseOptions(cmd)
 defineTrainingOptions(cmd)
+processArgs(cmd)
 
-local opt = processArgs(cmd)
-assert(paths.filep(opt.model), 'Cannot find model ' .. opt.model)
+assert(paths.filep(opts.model), 'Cannot find model ' .. opts.model)
 
-local model = Model(opt.model)
-opt.processor.model = model
-
-model:train(opt, bind(opt.processor.trainBatch, opt.processor))
+local model = Model(opts.model)
+opts.processor.model = model
+opts.processor:initializeThreads()
+model:train()
+print("Done!")

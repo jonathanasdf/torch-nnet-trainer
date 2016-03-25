@@ -1,35 +1,36 @@
---
---  Copyright (c) 2014, Facebook, Inc.
---  All rights reserved.
---
---  This source code is licensed under the BSD-style license found in the
---  LICENSE file in the root directory of this source tree. An additional grant
---  of patent rights can be found in the PATENTS file in the same directory.
---
 require 'cunn'
 require 'cudnn'
 require 'dpnn'
-require 'optim'
 require 'paths'
 
 require 'dataLoader'
 require 'resnet'
 require 'utils'
 
-local M = torch.class('Model')
-local loadDataParallel
+local M, Parent = torch.class('Model', 'nn.Decorator')
 
 function M:__init(path)
   if nGPU == 0 then
     self.backend = 'nn'
   else
-    cutorch.setDevice(1)
     self.backend = 'cudnn'
   end
 
   if path then
     self:load(path)
   end
+  Parent.__init(self, self.model)
+end
+
+local function loadSavedModel(filename, backend)
+  local model
+  if paths.extname(filename) == 'caffemodel' then
+    require 'loadcaffe'
+    model = loadcaffe.load(paths.dirname(filename) .. '/deploy.prototxt', filename, backend)
+  else
+    model = torch.load(filename)
+  end
+  return model
 end
 
 function M:load(path)
@@ -44,206 +45,132 @@ function M:load(path)
     end
   else
     print('Loading model from file: ' .. path)
-    self.model = loadDataParallel(path, self.backend)
+    self.model = loadSavedModel(path, self.backend)
   end
   if nGPU > 0 then
     self.model = self.model:cuda()
   end
-  self.parameters, self.gradParameters = self.model:getParameters()
 
   print('=> Model')
   print(self.model)
 
+  self.parameters, self.gradParameters = self.model:getParameters()
   print('Total parameters: ', self.gradParameters:size(1))
-  return self
 end
 
-local function trainBatch(model, trainFn, opt, pathNames, inputs)
-  if nGPU > 0 then
-    inputs = inputs:cuda()
+function M:forward(inputs, deterministic)
+  if deterministic then
+    self:evaluate()
+  else
+    self:training()
   end
-
-  trainFn(pathNames, inputs)
-
-  opt.train_iter = opt.train_iter + 1
-  if opt.train_iter % opt.update_every == 0 then
-    optim.sgd(function() return 0, model.gradParameters end, model.parameters, opt.optimState)
-    model:zeroGradParameters()
-  end
-
-  if model.model.needsSync then
-    model.model:syncParameters()
-  end
+  return Parent.forward(self, inputs)
 end
 
-local function validBatch(model, processor, pathNames, inputs)
-  local loss, cnt = processor:testBatch(pathNames, inputs)
+local function updateModel(model, gradParameters)
+    opts.train_iter = opts.train_iter + 1
+    if gradParameters then
+      model.gradParameters:add(gradParameters)
+    end
+    if opts.train_iter % opts.update_every == 0 then
+      opts.processor:updateModel()
+    end
+    jobDone()
+end
+
+local function accValResults(model, loss, cnt, ...)
+  opts.processor:accStats(...)
   model.valid_loss = model.valid_loss + loss
   model.valid_count = model.valid_count + cnt
+  jobDone()
 end
 
-function M:train(opt, trainFn)
-  if not(opt.input) then
+function M:train(trainFn, valFn)
+  if not(opts.input) then
     error('Input must be defined for training.')
   end
-
-  local train_loader = DataLoader{path = opt.input}
-
-  local valid_loader
-  if opt.val ~= '' then
-    valid_loader = DataLoader{path = opt.val, randomize = true}
+  if not trainFn then
+    trainFn = opts.processor.train
+  end
+  if not valFn then
+    valFn = opts.processor.test
   end
 
-  if opt.optimState ~= '' then
-    opt.optimState = torch.load(opt.optimState)
+  local train_loader = DataLoader{path = opts.input}
+
+  local valid_loader
+  if opts.val ~= '' then
+    valid_loader = DataLoader{path = opts.val, randomize = true}
+  end
+
+  if opts.optimState ~= '' then
+    opts.optimState = torch.load(opts.optimState)
   else
-    opt.optimState = {
-      learningRate = opt.LR,
+    opts.optimState = {
+      learningRate = opts.LR,
       learningRateDecay = 0.0,
-      momentum = opt.momentum,
+      momentum = opts.momentum,
       dampening = 0.0,
       nesterov = true,
-      weightDecay = opt.weightDecay
+      weightDecay = opts.weightDecay
     }
   end
 
   local signal = require("posix.signal")
   signal.signal(signal.SIGINT, function(signum)
-    if opt.output and opt.output ~= '' then
-      self:save(opt.basename .. '.interrupt')
-      opt.optimState.dfdx = nil
-      torch.save(opt.basename .. '.interrupt.optimState', opt.optimState)
+    if opts.output and opts.output ~= '' then
+      self:save(opts.basename .. '.interrupt')
+      opts.optimState.dfdx = nil
+      torch.save(opts.basename .. '.interrupt.optimState', opts.optimState)
     end
     os.exit(128 + signum)
   end)
 
-  opt.train_iter = 0
   self:zeroGradParameters()
-  local trainFn = bind(trainBatch, self, trainFn, opt)
-  local valFn = bind(validBatch, self, opt.processor)
-
-  for epoch=1,opt.epochs do
+  opts.train_iter = 0
+  for epoch=1,opts.epochs do
     print('==> training epoch # ' .. epoch)
 
-    train_loader:runAsync(opt.batchSize,
-                          opt.epochSize,
+    train_loader:runAsync(opts.batchSize,
+                          opts.epochSize,
                           true, --shuffle
-                          bind_post(opt.processor.preprocessFn, true),
-                          trainFn)
+                          bind_post(opts.processor.preprocessFn, true),
+                          trainFn,
+                          bind(updateModel, self))
 
-    if opt.val ~= '' and epoch % opt.val_every == 0 then
+    if opts.val ~= '' and epoch % opts.val_every == 0 then
       self.valid_loss = 0
       self.valid_count = 0
-      opt.processor:resetStats()
-      valid_loader:runAsync(opt.batchSize,
-                            opt.valSize,
+      opts.processor:resetStats()
+      valid_loader:runAsync(opts.valBatchSize,
+                            opts.valSize,
                             false, --don't shuffle
-                            bind_post(opt.processor.preprocessFn, false),
-                            valFn)
+                            bind_post(opts.processor.preprocessFn, false),
+                            valFn,
+                            bind(accValResults, self))
       self.valid_loss = self.valid_loss / self.valid_count
       print(string.format('  Validation loss: %.6f', self.valid_loss))
-      opt.processor:printStats()
+      opts.processor:printStats()
     end
 
-    if opt.cache_every ~= -1 and epoch % opt.cache_every == 0 and
-       opt.output and opt.output ~= '' then
-      self:save(opt.basename .. '.cached')
-      opt.optimState.dfdx = nil
-      torch.save(opt.basename .. '.cached.optimState', opt.optimState)
+    if opts.cache_every ~= -1 and epoch % opts.cache_every == 0 and
+       opts.output and opts.output ~= '' then
+      self:save(opts.basename .. '.cached')
+      opts.optimState.dfdx = nil
+      torch.save(opts.basename .. '.cached.optimState', opts.optimState)
     end
   end
-  if opt.output and opt.output ~= '' then
-    self:save(opt.output)
-    opt.optimState.dfdx = nil
-    torch.save(opt.output .. '.optimState', opt.optimState)
+
+  if opts.output and opts.output ~= '' then
+    self:save(opts.output)
+    opts.optimState.dfdx = nil
+    torch.save(opts.output .. '.optimState', opts.optimState)
   end
-end
-
-function M:forward(inputs, deterministic)
-  if nGPU > 0 then
-    inputs = inputs:cuda()
-  end
-  if deterministic then
-    self.model:evaluate()
-  else
-    self.model:training()
-  end
-  return self.model:forward(inputs)
-end
-
-function M:zeroGradParameters()
-  self.model:zeroGradParameters()
-end
-
-function M:backward(inputs, gradOutputs)
-  return self.model:backward(inputs, gradOutputs)
-end
-
-
-
-function makeDataParallel(model)
-  if not(noUseDataParallelTable) and nGPU > 0 then
-    print('converting model to nn.DataParallelTable')
-    local gpu = torch.range(1, nGPU):totable()
-    local model_single = model
-    model = nn.DataParallelTable(1)
-    model:add(model_single:clone(), gpu)
-  end
-  return model
-end
-
-function loadDataParallel(filename, backend)
-  nn.DataParallelTable.deserializeNGPUs = nGPU
-
-  local model
-  if paths.extname(filename) == 'caffemodel' then
-    require 'loadcaffe'
-    model = loadcaffe.load(paths.dirname(filename) .. '/deploy.prototxt', filename, backend)
-  else
-    model = torch.load(filename)
-  end
-
-  if torch.type(model) == 'nn.DataParallelTable' then
-    return makeDataParallel(model:get())
-  elseif torch.type(model) == 'nn.Sequential' then
-    for i,module in ipairs(model.modules) do
-      if torch.type(module) == 'nn.DataParallelTable' then
-        model.modules[i] = makeDataParallel(module:get())
-      end
-    end
-    return model
-  else
-    error('The loaded model is not a Sequential or DataParallelTable module.')
-  end
-end
-
-local function cleanDPT(module)
-  -- This assumes this DPT was created by the function above: all the
-  -- module.modules are clones of the same network on different GPUs
-  -- hence we only need to keep one when saving the model to the disk.
-  local newDPT = nn.DataParallelTable(1)
-  newDPT:add(module:get(), 1)
-  return newDPT
 end
 
 function M:save(filename)
-  self.model:clearState()
-
-  if torch.type(self.model) == 'nn.DataParallelTable' then
-    torch.save(filename, cleanDPT(self.model))
-  elseif torch.type(self.model) == 'nn.Sequential' then
-    local temp_model = nn.Sequential()
-    for i, module in ipairs(self.model.modules) do
-      if torch.type(module) == 'nn.DataParallelTable' then
-        temp_model:add(cleanDPT(module))
-      else
-        temp_model:add(module)
-      end
-    end
-    torch.save(filename, temp_model)
-  else
-    error('This saving function only works with Sequential or DataParallelTable modules.')
-  end
+  self:clearState()
+  torch.save(filename, self.model)
 end
 
 return M
