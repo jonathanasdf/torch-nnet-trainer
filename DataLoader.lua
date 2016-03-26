@@ -2,7 +2,7 @@ require 'image'
 require 'paths'
 require 'xlua'
 
-require 'utils'
+require 'Utils'
 
 local argcheck = require 'argcheck'
 local initcheck = argcheck{
@@ -21,7 +21,7 @@ local initcheck = argcheck{
    default=false}
 }
 
-local dataLoader = torch.class('DataLoader')
+local DataLoader = torch.class('DataLoader')
 
 local min = math.min
 local ceil = math.ceil
@@ -93,12 +93,12 @@ function DataLoader:sample(quantity)
   return self:retrieve(indices)
 end
 
-function DataLoader:get(start, end_incl, perm)
+function DataLoader:get(start, endIncl, perm)
   local indices
   if type(start) == 'number' then
-    if type(end_incl) == 'number' then -- range of indices
-      end_incl = min(end_incl, self:size())
-      indices = torch.range(start, end_incl);
+    if type(endIncl) == 'number' then -- range of indices
+      endIncl = min(endIncl, self:size())
+      indices = torch.range(start, endIncl);
     else -- single index
       indices = {start}
     end
@@ -107,7 +107,7 @@ function DataLoader:get(start, end_incl, perm)
   elseif (type(start) == 'userdata' and start:nDimension() == 1) then
     indices = start -- tensor
   else
-    error('Unsupported input types: ' .. type(start) .. ' ' .. type(end_incl))
+    error('Unsupported input types: ' .. type(start) .. ' ' .. type(endIncl))
   end
   if perm then
     indices = perm:index(1, indices:long())
@@ -154,4 +154,4 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, preprocessFn, worker
   threads:synchronize()
 end
 
-return dataLoader
+return DataLoader

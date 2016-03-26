@@ -3,9 +3,9 @@ require 'cudnn'
 require 'dpnn'
 require 'paths'
 
-require 'dataLoader'
+require 'DataLoader'
+require 'Utils'
 require 'resnet'
-require 'utils'
 
 local M, Parent = torch.class('Model', 'nn.Decorator')
 
@@ -68,11 +68,11 @@ function M:forward(inputs, deterministic)
 end
 
 local function updateModel(model, gradParameters)
-    opts.train_iter = opts.train_iter + 1
+    opts.trainIter = opts.trainIter + 1
     if gradParameters then
       model.gradParameters:add(gradParameters)
     end
-    if opts.train_iter % opts.update_every == 0 then
+    if opts.trainIter % opts.updateEvery == 0 then
       opts.processor:updateModel()
     end
     jobDone()
@@ -80,8 +80,8 @@ end
 
 local function accValResults(model, loss, cnt, ...)
   opts.processor:accStats(...)
-  model.valid_loss = model.valid_loss + loss
-  model.valid_count = model.valid_count + cnt
+  model.validLoss = model.validLoss + loss
+  model.validCount = model.validCount + cnt
   jobDone()
 end
 
@@ -96,11 +96,11 @@ function M:train(trainFn, valFn)
     valFn = opts.processor.test
   end
 
-  local train_loader = DataLoader{path = opts.input}
+  local trainLoader = DataLoader{path = opts.input}
 
-  local valid_loader
+  local validLoader
   if opts.val ~= '' then
-    valid_loader = DataLoader{path = opts.val, randomize = true}
+    validLoader = DataLoader{path = opts.val, randomize = true}
   end
 
   if opts.optimState ~= '' then
@@ -127,33 +127,33 @@ function M:train(trainFn, valFn)
   end)
 
   self:zeroGradParameters()
-  opts.train_iter = 0
+  opts.trainIter = 0
   for epoch=1,opts.epochs do
     print('==> training epoch # ' .. epoch)
 
-    train_loader:runAsync(opts.batchSize,
-                          opts.epochSize,
-                          true, --shuffle
-                          bind_post(opts.processor.preprocessFn, true),
-                          trainFn,
-                          bind(updateModel, self))
+    trainLoader:runAsync(opts.batchSize,
+                         opts.epochSize,
+                         true, --shuffle
+                         bindPost(opts.processor.preprocessFn, true),
+                         trainFn,
+                         bind(updateModel, self))
 
-    if opts.val ~= '' and epoch % opts.val_every == 0 then
-      self.valid_loss = 0
-      self.valid_count = 0
+    if opts.val ~= '' and epoch % opts.valEvery == 0 then
+      self.validLoss = 0
+      self.validCount = 0
       opts.processor:resetStats()
-      valid_loader:runAsync(opts.valBatchSize,
-                            opts.valSize,
-                            false, --don't shuffle
-                            bind_post(opts.processor.preprocessFn, false),
-                            valFn,
-                            bind(accValResults, self))
-      self.valid_loss = self.valid_loss / self.valid_count
-      print(string.format('  Validation loss: %.6f', self.valid_loss))
+      validLoader:runAsync(opts.valBatchSize,
+                           opts.valSize,
+                           false, --don't shuffle
+                           bindPost(opts.processor.preprocessFn, false),
+                           valFn,
+                           bind(accValResults, self))
+      self.validLoss = self.validLoss / self.validCount
+      print(string.format('  Validation loss: %.6f', self.validLoss))
       opts.processor:printStats()
     end
 
-    if opts.cache_every ~= -1 and epoch % opts.cache_every == 0 and
+    if opts.cacheEvery ~= -1 and epoch % opts.cacheEvery == 0 and
        opts.output and opts.output ~= '' then
       self:save(opts.basename .. '.cached')
       opts.optimState.dfdx = nil

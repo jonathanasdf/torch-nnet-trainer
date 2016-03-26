@@ -1,19 +1,19 @@
 require 'fbnn'
-local Processor = require 'processor'
+local Processor = require 'Processor'
 local M = torch.class('ImageNetProcessor', 'Processor')
 
 function M:__init()
   self.cmd:option('-cropSize', 224, 'What size to crop to.')
   Processor.__init(self)
 
-  assert(self.processor_opts.cropSize <= 256)
-  self.processor_opts.mean_pixel = {}
-  self.processor_opts.mean_pixel[1] = torch.Tensor{103.939, 116.779, 123.68}:view(1, 1, 3)
+  assert(self.processorOpts.cropSize <= 256)
+  self.processorOpts.meanPixel = {}
+  self.processorOpts.meanPixel[1] = torch.Tensor{103.939, 116.779, 123.68}:view(1, 1, 3)
   if nGPU > 0 then
-    self.processor_opts.mean_pixel[1] = self.processor_opts.mean_pixel[1]:cuda()
+    self.processorOpts.meanPixel[1] = self.processorOpts.meanPixel[1]:cuda()
     for i=2,nGPU do
       cutorch.setDevice(i)
-      self.processor_opts.mean_pixel[i] = self.processor_opts.mean_pixel[1]:clone()
+      self.processorOpts.meanPixel[i] = self.processorOpts.meanPixel[1]:clone()
     end
     cutorch.setDevice(1)
   end
@@ -40,7 +40,7 @@ function M:__init()
   end
 end
 
-function M.preprocess(path, isTraining, processor_opts)
+function M.preprocess(path, isTraining, processorOpts)
   local img = cv.imread{path, cv.IMREAD_COLOR}:float()
   if nGPU > 0 then
     img = img:cuda()
@@ -63,13 +63,13 @@ function M.preprocess(path, isTraining, processor_opts)
     img = img:permute(2, 3, 1)
   end
 
-  local sz = processor_opts.cropSize
+  local sz = processorOpts.cropSize
   local iW = img:size(2)
   local iH = img:size(1)
   local w1 = math.ceil((iW-sz)/2)
   local h1 = math.ceil((iH-sz)/2)
   img = img[{{h1, h1+sz-1}, {w1, w1+sz-1}}] -- center patch
-  return img:csub(processor_opts.mean_pixel[gpu]:expandAs(img)):permute(3, 1, 2)
+  return img:csub(processorOpts.meanPixel[gpu]:expandAs(img)):permute(3, 1, 2)
 end
 
 function M.getLabels(pathNames)

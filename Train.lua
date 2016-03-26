@@ -1,8 +1,8 @@
 package.path = package.path .. ';/home/jshen/scripts/?.lua'
 
-require 'model'
 require 'paths'
-require 'utils'
+require 'Model'
+require 'Utils'
 
 local cmd = torch.CmdLine()
 cmd:argument('-model', 'model to train')

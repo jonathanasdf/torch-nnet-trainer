@@ -4,7 +4,7 @@ function defineBaseOptions(cmd)
     'REQUIRED. lua file that does the heavy lifting. ' ..
     'See processor.lua for functions that can be defined.\n'
   )
-  cmd:option('-processor_opts', '', 'additional options for the processor')
+  cmd:option('-processorOpts', '', 'additional options for the processor')
   cmd:option('-batchSize', 32, 'batch size')
   cmd:option('-epochSize', -1, 'num batches per epochs. -1 means run all available data once')
   cmd:option('-nThreads', 4, 'number of worker threads')
@@ -17,12 +17,12 @@ function defineTrainingOptions(cmd)
   cmd:option('-momentum', 0.9, 'momentum')
   cmd:option('-weightDecay', 0.0005, 'weight decay')
   cmd:option('-epochs', 50, 'num epochs')
-  cmd:option('-update_every', 1, 'update model with sgd every n batches')
-  cmd:option('-cache_every', 20, 'save model every n epochs. Set to -1 or a value >epochs to disable')
+  cmd:option('-updateEvery', 1, 'update model with sgd every n batches')
+  cmd:option('-cacheEvery', 20, 'save model every n epochs. Set to -1 or a value >epochs to disable')
   cmd:option('-val', '', 'validation data')
   cmd:option('-valBatchSize', -1, 'batch size for validation')
   cmd:option('-valSize', -1, 'num batches to validate. -1 means run all available data once')
-  cmd:option('-val_every', 20, 'run validation every n epochs')
+  cmd:option('-valEvery', 1, 'run validation every n epochs')
   cmd:option('-optimState', '', 'optimState to resume from')
 end
 
@@ -56,8 +56,8 @@ function processArgs(cmd)
     end
   end
 
-  if not opts.update_every then opts.update_every = 1 end
-  opts.batchCount = opts.batchSize * opts.update_every
+  if not opts.updateEvery then opts.updateEvery = 1 end
+  opts.batchCount = opts.batchSize * opts.updateEvery
   if opts.LR then opts.LR = opts.LR / opts.batchCount end
 
   if opts.output and opts.output ~= '' then
@@ -71,7 +71,7 @@ function processArgs(cmd)
   if opts.processor == '' then
     error('A processor must be supplied.')
   end
-  local processor_path = opts.processor
+  local processorPath = opts.processor
   opts.processor = requirePath(opts.processor).new()
 
   local opt = opts
@@ -93,10 +93,11 @@ function processArgs(cmd)
       require 'dpnn'
       require 'fbnn'
       require 'image'
-      require 'model'
       require 'paths'
-      require 'utils'
-      requirePath(processor_path)
+
+      require 'Model'
+      require 'Utils'
+      requirePath(processorPath)
 
       local min = math.min
       local max = math.max
@@ -163,12 +164,12 @@ function tableToBatchTensor(T)
   return cat(T, 1)
 end
 
-local RGB_BGR = torch.LongTensor{3,2,1}
+local RGBBGR = torch.LongTensor{3,2,1}
 function tensorToCVImg(T)
   if T:dim() == 2 then
     return (T*255):byte()
   elseif T:dim() == 3 then
-    return (T:index(1, RGB_BGR):permute(2, 3, 1)*255):byte()
+    return (T:index(1, RGBBGR):permute(2, 3, 1)*255):byte()
   else
     error('2d or 3d tensor expected')
   end
@@ -178,7 +179,7 @@ function cvImgToTensor(I)
   if I:dim() == 2 then
     return I:float() / 255.0
   elseif I:dim() == 3 then
-    return I:index(3, RGB_BGR):permute(3, 1, 2):float() / 255.0
+    return I:index(3, RGBBGR):permute(3, 1, 2):float() / 255.0
   else
     error('2d or 3d image expected')
   end
@@ -234,14 +235,14 @@ end
 
 local va = require 'vararg'
 function bind(f, ...)
-  local outer_args = va(...)
+  local outer = va(...)
   local function closure(...)
-    return f(va.concat(outer_args, va(...)))
+    return f(va.concat(outer, va(...)))
   end
   return closure
 end
 
-function bind_post(f, arg)
+function bindPost(f, arg)
   local function closure(...)
     local args = {...}
     args[#args+1] = arg

@@ -1,7 +1,7 @@
 package.path = package.path .. ';/home/jshen/scripts/?.lua'
 
-require 'model'
-require 'dataLoader'
+require 'DataLoader'
+require 'Model'
 
 local cmd = torch.CmdLine()
 cmd:argument('-model', 'model to load')
@@ -25,7 +25,7 @@ DataLoader{path = opts.input}:runAsync(
   opts.batchSize,
   opts.epochSize,
   true,          -- shuffle,
-  bind_post(opts.processor.preprocessFn, false),
+  bindPost(opts.processor.preprocessFn, false),
   opts.processor.test,
   accResults)
 opts.processor:printStats()

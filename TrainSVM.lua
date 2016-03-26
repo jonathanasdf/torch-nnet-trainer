@@ -1,10 +1,10 @@
 package.path = package.path .. ';/home/jshen/scripts/?.lua'
 
+require 'paths'
 require 'svm'
 
-require 'model'
-require 'paths'
-require 'utils'
+require 'Model'
+require 'Utils'
 
 local cmd = torch.CmdLine()
 cmd:argument('-model', 'model to train')
@@ -43,9 +43,9 @@ DataLoader{path = opts.input}:runAsync(
   opts.batchSize,
   opts.epochSize,
   true,           -- shuffle,
-  bind_post(opts.processor.preprocessFn, true),
+  bindPost(opts.processor.preprocessFn, true),
   getData,
   accumulateData)
 
-local svm_model = liblinear.train(data, '-s 2 -B 1')
-torch.save(opts.output, svm_model)
+local svmmodel = liblinear.train(data, '-s 2 -B 1')
+torch.save(opts.output, svmmodel)

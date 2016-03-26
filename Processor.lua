@@ -1,14 +1,15 @@
 require 'image'
 require 'optim'
 require 'paths'
-require 'utils'
+
+require 'Utils'
 
 local M = torch.class('Processor')
 
 M.cmd = torch.CmdLine()
 function M:__init()
-  self.processor_opts = self.cmd:parse(opts.processor_opts:split(' ='))
-  self.preprocessFn = bind_post(self.preprocess, self.processor_opts)
+  self.processorOpts = self.cmd:parse(opts.processorOpts:split(' ='))
+  self.preprocessFn = bindPost(self.preprocess, self.processorOpts)
 end
 
 -- copy the processor and model to multiple threads/GPUs
@@ -20,18 +21,18 @@ function M:initializeThreads()
   local this = self
   if nGPU > 0 then assert(cutorch.getDevice() == 1) end
   local nDevices = math.max(nGPU, 1)
-  local local_model = self.model
+  local localModel = self.model
   local models = {}
   local mutexes = {}
   for device=1,nDevices do
     if device ~= 1 then
       cutorch.setDevice(device)
-      local_model = local_model:clone()
+      localModel = localModel:clone()
     end
-    models[device] = local_model
+    models[device] = localModel
     -- Separate mutex for each GPU
     mutexes[device] = (require 'threads').Mutex()
-    local mutex_id = mutexes[device]:id()
+    local mutexId = mutexes[device]:id()
     for i=device-1,nThreads,nDevices do if i > 0 then
       threads:addjob(i,
         function()
@@ -40,9 +41,9 @@ function M:initializeThreads()
           processor = this
           if opts.replicateModel then
             if __threadid <= nDevices then
-              model = local_model
+              model = localModel
             else
-              model = local_model:clone('weight', 'bias')
+              model = localModel:clone('weight', 'bias')
             end
             isReplica = __threadid ~= nDevices
             if isReplica then
@@ -50,12 +51,12 @@ function M:initializeThreads()
               mutex.lock = function() end
               mutex.unlock = function() end
             else
-              mutex = (require 'threads').Mutex(mutex_id)
+              mutex = (require 'threads').Mutex(mutexId)
             end
           else
-            model = local_model
+            model = localModel
             isReplica = device ~= 1
-            mutex = (require 'threads').Mutex(mutex_id)
+            mutex = (require 'threads').Mutex(mutexId)
           end
 
           if processor.criterion then
@@ -75,7 +76,7 @@ function M:initializeThreads()
 end
 
 -- Takes path as input and returns something that can be used as input to the model, like an image
-function M.preprocess(path, isTraining, processor_opts)
+function M.preprocess(path, isTraining, processorOpts)
   return image.load(path, 3)
 end
 
@@ -89,11 +90,11 @@ function M.forward(inputs, deterministic)
 end
 
 -- Return gradParameters if isReplica, otherwise accumulate gradients in model and return nil
-function M.backward(inputs, grad_outputs)
+function M.backward(inputs, gradOutputs)
   local gradParameters
   if isReplica then
     model:zeroGradParameters()
-    model:backward(inputs, grad_outputs)
+    model:backward(inputs, gradOutputs)
     if nGPU > 0 and model.gradParameters:getDevice() ~= 1 then
       cutorch.setDevice(1)
       gradParameters = model.gradParameters:clone()
@@ -102,7 +103,7 @@ function M.backward(inputs, grad_outputs)
       gradParameters = model.gradParameters:clone()
     end
   else
-    model:backward(inputs, grad_outputs)
+    model:backward(inputs, gradOutputs)
   end
   return gradParameters
 end
@@ -119,8 +120,8 @@ function M.train(pathNames, inputs)
   local outputs = processor.forward(inputs)
   --Assumes criterion.sizeAverage = false
   processor.criterion:forward(outputs, labels)
-  local grad_outputs = processor.criterion:backward(outputs, labels)
-  local gradParameters = processor.backward(inputs, grad_outputs)
+  local gradOutputs = processor.criterion:backward(outputs, labels)
+  local gradParameters = processor.backward(inputs, gradOutputs)
   mutex:unlock()
   return gradParameters
 end
@@ -149,7 +150,7 @@ function M:accStats(...) end
 -- Called after each validation/test run
 function M:printStats() end
 
--- return {aggregated_loss, #instances_tested, stats}
+-- return {aggregatedLoss, #instancesTested, stats}
 function M.testWithLabels(pathNames, inputs, labels)
   mutex:lock()
   local outputs = processor.forward(inputs, true)
