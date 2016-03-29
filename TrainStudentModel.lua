@@ -1,6 +1,9 @@
 package.path = package.path .. ';/home/jshen/scripts/?.lua'
 
 require 'paths'
+cv = require 'cv'
+require 'cv.cudawarping'
+require 'cv.imgcodecs'
 
 require 'Model'
 require 'SoftCrossEntropyCriterion'
@@ -51,36 +54,45 @@ if nGPU > 0 then
 end
 
 
-local specific = threads:specific()
-threads:specific(true)
-if nGPU > 0 then assert(cutorch.getDevice() == 1) end
-local nDevices = math.max(nGPU, 1)
-for device=1,nDevices do
-  if device ~= 1 then
-    cutorch.setDevice(device)
-    localTeacher = localTeacher:clone()
-  end
-  local teacherMutexId = (require 'threads').Mutex():id()
-  for i=device-1,nThreads,nDevices do if i > 0 then
-    threads:addjob(i,
-      function()
-        require 'SoftCrossEntropyCriterion'
-      end
-    )
-    threads:addjob(i,
-      function()
-        teacher = localTeacher
-        if opts.teacherProcessor ~= '' then
-          teacherProcessor = localTeacherProcessor
+if nThreads == 0 then
+  teacher = localTeacher
+  teacherProcessor = localTeacherProcessor
+  teacherMutex = {}
+  teacherMutex.lock = function() end
+  teacherMutex.unlock = function() end
+  softCriterion = criterion
+else
+  local specific = threads:specific()
+  threads:specific(true)
+  if nGPU > 0 then assert(cutorch.getDevice() == 1) end
+  local nDevices = math.max(nGPU, 1)
+  for device=1,nDevices do
+    if device ~= 1 then
+      cutorch.setDevice(device)
+      localTeacher = localTeacher:clone()
+    end
+    local teacherMutexId = (require 'threads').Mutex():id()
+    for i=device-1,nThreads,nDevices do if i > 0 then
+      threads:addjob(i,
+        function()
+          require 'SoftCrossEntropyCriterion'
         end
-        teacherMutex = (require 'threads').Mutex(teacherMutexId)
-        softCriterion = criterion:clone()
-      end
-    )
-  end end
+      )
+      threads:addjob(i,
+        function()
+          teacher = localTeacher
+          if opts.teacherProcessor ~= '' then
+            teacherProcessor = localTeacherProcessor
+          end
+          teacherMutex = (require 'threads').Mutex(teacherMutexId)
+          softCriterion = criterion:clone()
+        end
+      )
+    end end
+  end
+  if nGPU > 0 then cutorch.setDevice(1) end
+  threads:specific(specific)
 end
-if nGPU > 0 then cutorch.setDevice(1) end
-threads:specific(specific)
 
 
 local function train(pathNames, studentInputs)

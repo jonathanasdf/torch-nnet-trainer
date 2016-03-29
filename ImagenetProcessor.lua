@@ -1,3 +1,6 @@
+cv = require 'cv'
+require 'cv.cudawarping'
+require 'cv.imgcodecs'
 require 'fbnn'
 local Processor = require 'Processor'
 local M = torch.class('ImageNetProcessor', 'Processor')

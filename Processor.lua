@@ -15,6 +15,17 @@ end
 -- copy the processor and model to multiple threads/GPUs
 function M:initializeThreads()
   assert(self.model)
+  if nThreads == 0 then
+    gpu = 1
+    model = self.model
+    processor = self
+    mutex = {}
+    mutex.lock = function() end
+    mutex.unlock = function() end
+    self.models = {model}
+    self.mutexes = {mutex}
+    return
+  end
   print("Copying models to threads...")
   local specific = threads:specific()
   threads:specific(true)
@@ -28,6 +39,7 @@ function M:initializeThreads()
     if device ~= 1 then
       cutorch.setDevice(device)
       localModel = localModel:clone()
+      localModel.parameters, localModel.gradParameters = localModel.model:getParameters()
     end
     models[device] = localModel
     -- Separate mutex for each GPU
@@ -44,6 +56,7 @@ function M:initializeThreads()
               model = localModel
             else
               model = localModel:clone('weight', 'bias')
+              model.parameters, model.gradParameters = model.model:getParameters()
             end
             isReplica = __threadid ~= nDevices
             if isReplica then

@@ -33,17 +33,23 @@ function processArgs(cmd)
     error('nGPU should not be 0. Please set nGPU to -1 if you want to use CPU.')
   end
   if opts.nGPU == -1 then opts.nGPU = 0 end
-  nGPU = opts.nGPU
-
-  if opts.nThreads < math.max(1, opts.nGPU-1) then
-    error('nThreads < max(1, nGPU-1).')
+  if opts.nThreads < opts.nGPU-1 then
+    if opts.nThreads == 0 then
+      print('Not enough threads to use all gpus. Setting nGPU=1 since nThreads=0.')
+      opts.nGPU = 1
+    else
+      opts.nThreads = opts.nGPU-1
+      print('Not enough threads to use all gpus. Increasing nThreads to ' .. opts.nThreads)
+    end
   end
-  if opts.nThreads > math.max(1, opts.nGPU) then
-    print('\27[31mThere is currently a bug when nThreads > nGPU. Setting nThreads to nGPU.\27[0m')
+  if opts.nThreads > math.max(1, opts.nGPU) and not(opts.replicateModel) then
     opts.nThreads = math.max(1, opts.nGPU)
+    print('\27[31mThere is currently a bug when nThreads > nGPU. Setting nThreads to ' .. opts.nThreads .. '.\27[0m')
   end
-  nThreads = opts.nThreads
-
+  if opts.cacheEvery and opts.cacheEvery ~= -1 and opts.nThreads > 0 then
+    print('\27[31mThere is currently a bug with saving model when nThreads > 0. Disabling caching.\27[0m')
+    opts.cacheEvery = -1
+  end
   if opts.batchSize <= 1 then
     error('Sorry, this framework only supports batchSize > 1.')
   end
@@ -55,6 +61,9 @@ function processArgs(cmd)
       error('Sorry, this framework only supports valBatchSize > 1.')
     end
   end
+
+  nGPU = opts.nGPU
+  nThreads = opts.nThreads
 
   if not opts.updateEvery then opts.updateEvery = 1 end
   opts.batchCount = opts.batchSize * opts.updateEvery
@@ -74,45 +83,54 @@ function processArgs(cmd)
   local processorPath = opts.processor
   opts.processor = requirePath(opts.processor).new()
 
-  local opt = opts
-  torch.setnumthreads(opts.nThreads)
-  local Threads = require 'threads'
-  Threads.serialization('threads.sharedserialize')
-  threads = Threads(opts.nThreads,
-    function()
-      package.path = package.path .. ';/home/jshen/scripts/?.lua'
-      package.path = package.path .. ';/home/nvesdapu/opencv/?.lua'
-    end,
-    function()
-      torch.setdefaulttensortype('torch.FloatTensor')
-      require 'cunn'
-      require 'cudnn'
-      cv = require 'cv'
-      require 'cv.cudawarping'
-      require 'cv.imgcodecs'
-      require 'dpnn'
-      require 'fbnn'
-      require 'image'
-      require 'paths'
+  if opts.nThreads > 0 then
+    local opt = opts
+    torch.setnumthreads(opts.nThreads)
+    local Threads = require 'threads'
+    Threads.serialization('threads.sharedserialize')
+    threads = Threads(opts.nThreads,
+      function()
+        package.path = package.path .. ';/home/jshen/scripts/?.lua'
+        package.path = package.path .. ';/home/nvesdapu/opencv/?.lua'
+      end,
+      function()
+        torch.setdefaulttensortype('torch.FloatTensor')
+        require 'cunn'
+        require 'cudnn'
+        cv = require 'cv'
+        require 'cv.cudawarping'
+        require 'cv.imgcodecs'
+        require 'dpnn'
+        require 'fbnn'
+        require 'image'
+        require 'paths'
 
-      require 'Model'
-      require 'Utils'
-      requirePath(processorPath)
+        require 'Model'
+        require 'Utils'
+        requirePath(processorPath)
 
-      local min = math.min
-      local max = math.max
-      local floor = math.floor
-      local ceil = math.ceil
-    end,
-    function()
-      opts = opt
-      nGPU = opts.nGPU
-      nThreads = opts.nThreads
-    end
-  )
+        local min = math.min
+        local max = math.max
+        local floor = math.floor
+        local ceil = math.ceil
+      end,
+      function()
+        opts = opt
+        nGPU = opts.nGPU
+        nThreads = opts.nThreads
+      end
+    )
+  else
+    threads = {}
+    threads.addjob = function(self, f1, f2, ...) f2(f1(...)) end
+    threads.synchronize = function() end
+  end
 end
 
 function augmentThreadState(...)
+  if nThreads == 0 then
+    return
+  end
   local specific = threads:specific()
   threads:specific(true)
   local funcs = {...}

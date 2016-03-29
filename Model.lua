@@ -20,6 +20,12 @@ function M:__init(path)
     self:load(path)
   end
   Parent.__init(self, self.model)
+
+  print('=> Model')
+  print(self.model)
+
+  self.parameters, self.gradParameters = self:getParameters()
+  print('Total parameters: ', self.gradParameters:size(1))
 end
 
 local function loadSavedModel(filename, backend)
@@ -50,12 +56,6 @@ function M:load(path)
   if nGPU > 0 then
     self.model = self.model:cuda()
   end
-
-  print('=> Model')
-  print(self.model)
-
-  self.parameters, self.gradParameters = self.model:getParameters()
-  print('Total parameters: ', self.gradParameters:size(1))
 end
 
 function M:forward(inputs, deterministic)
@@ -64,7 +64,7 @@ function M:forward(inputs, deterministic)
   else
     self:training()
   end
-  return Parent.forward(self, inputs)
+  return self.model:forward(inputs)
 end
 
 local function updateModel(model, gradParameters)
@@ -120,8 +120,6 @@ function M:train(trainFn, valFn)
   signal.signal(signal.SIGINT, function(signum)
     if opts.output and opts.output ~= '' then
       self:save(opts.basename .. '.interrupt')
-      opts.optimState.dfdx = nil
-      torch.save(opts.basename .. '.interrupt.optimState', opts.optimState)
     end
     os.exit(128 + signum)
   end)
@@ -156,21 +154,19 @@ function M:train(trainFn, valFn)
     if opts.cacheEvery ~= -1 and epoch % opts.cacheEvery == 0 and
        opts.output and opts.output ~= '' then
       self:save(opts.basename .. '.cached')
-      opts.optimState.dfdx = nil
-      torch.save(opts.basename .. '.cached.optimState', opts.optimState)
     end
   end
 
   if opts.output and opts.output ~= '' then
     self:save(opts.output)
-    opts.optimState.dfdx = nil
-    torch.save(opts.output .. '.optimState', opts.optimState)
   end
 end
 
 function M:save(filename)
   self:clearState()
   torch.save(filename, self.model)
+  opts.optimState.dfdx = nil
+  torch.save(filename .. '.optimState', opts.optimState)
 end
 
 return M

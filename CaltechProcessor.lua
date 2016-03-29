@@ -1,3 +1,6 @@
+cv = require 'cv'
+require 'cv.cudawarping'
+require 'cv.imgcodecs'
 require 'fbnn'
 matio = require 'matio'
 require 'svm'
