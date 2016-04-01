@@ -37,6 +37,7 @@ local function accumulateData(arr)
   for i=1,#arr do
     data[#data+1] = arr[i]
   end
+  jobDone()
 end
 
 DataLoader{path = opts.input}:runAsync(

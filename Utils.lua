@@ -70,8 +70,11 @@ function processArgs(cmd)
   if opts.LR then opts.LR = opts.LR / opts.batchCount end
 
   if opts.output and opts.output ~= '' then
-    opts.basename = paths.dirname(opts.output) .. '/' .. paths.basename(opts.output, paths.extname(opts.output))
-    opts.logdir = opts.basename .. os.date("_%Y%m%d_%H%M%S/")
+    opts.dirname = paths.dirname(opts.output) .. '/'
+    opts.basename = paths.basename(opts.output, paths.extname(opts.output))
+    opts.backupdir = opts.dirname .. 'backups/'
+    paths.mkdir(opts.backupdir)
+    opts.logdir = opts.dirname .. 'logs/' .. opts.basename .. os.date("_%Y%m%d_%H%M%S/")
     paths.mkdir(opts.logdir)
     cmd:log(opts.logdir .. 'log.txt', opts)
     cmd:addTime()
@@ -95,8 +98,8 @@ function processArgs(cmd)
       end,
       function()
         torch.setdefaulttensortype('torch.FloatTensor')
-        require 'cunn'
         require 'cudnn'
+        require 'cunn'
         cv = require 'cv'
         require 'cv.cudawarping'
         require 'cv.imgcodecs'

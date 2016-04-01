@@ -1,5 +1,5 @@
-require 'cunn'
 require 'cudnn'
+require 'cunn'
 require 'dpnn'
 require 'paths'
 
@@ -119,7 +119,7 @@ function M:train(trainFn, valFn)
   local signal = require("posix.signal")
   signal.signal(signal.SIGINT, function(signum)
     if opts.output and opts.output ~= '' then
-      self:save(opts.basename .. '.interrupt')
+      self:save(opts.backupdir .. opts.basename .. '.interrupt')
     end
     os.exit(128 + signum)
   end)
@@ -153,7 +153,7 @@ function M:train(trainFn, valFn)
 
     if opts.cacheEvery ~= -1 and epoch % opts.cacheEvery == 0 and
        opts.output and opts.output ~= '' then
-      self:save(opts.basename .. '.cached')
+      self:save(opts.backupdir .. opts.basename .. '.cached')
     end
   end
 

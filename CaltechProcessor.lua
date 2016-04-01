@@ -20,6 +20,7 @@ end
 
 function M:__init()
   self.cmd:option('-imageSize', 113, 'What to resize to.')
+  self.cmd:option('-negativesWeight', 1, 'Relative weight of negative examples')
   self.cmd:option('-svm', '', 'SVM to use')
   self.cmd:option('-layer', 'fc7', 'layer to use as SVM input')
   defineSlidingWindowOptions(self.cmd)
@@ -41,7 +42,9 @@ function M:__init()
     matio.load('/file/caltech/test/box.mat', 'box')
   }
 
-  self.criterion = nn.TrueNLLCriterion()
+  local w = self.processorOpts.negativesWeight
+  local weights = torch.Tensor{w/(1+w), 1/(1+w)} * 2
+  self.criterion = nn.TrueNLLCriterion(weights)
   self.criterion.sizeAverage = false
   if nGPU > 0 then
     require 'cutorch'
