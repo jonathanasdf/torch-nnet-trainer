@@ -111,25 +111,25 @@ function M.calcStats(pathNames, outputs, labels)
     end
     --print(result)
   end
-  return top1, top5, #pathNames
+  return {top1, top5, #pathNames}
 end
 
 function M:resetStats()
-  self.top1 = 0
-  self.top5 = 0
-  self.total = 0
+  self.stats = {}
+  self.stats.top1 = 0
+  self.stats.top5 = 0
+  self.stats.total = 0
 end
 
-function M:accStats(...)
-  a, b, c = ...
-  self.top1 = self.top1 + a
-  self.top5 = self.top5 + b
-  self.total = self.total + c
+function M:accStats(new_stats)
+  self.stats.top1 = self.stats.top1 + new_stats[1]
+  self.stats.top5 = self.stats.top5 + new_stats[2]
+  self.stats.total = self.stats.total + new_stats[3]
 end
 
 function M:printStats()
-  print('  Top 1 accuracy: ' .. self.top1 .. '/' .. self.total .. ' = ' .. (self.top1*100.0/self.total) .. '%')
-  print('  Top 5 accuracy: ' .. self.top5 .. '/' .. self.total .. ' = ' .. (self.top5*100.0/self.total) .. '%')
+  print('  Top 1 accuracy: ' .. self.stats.top1 .. '/' .. self.stats.total .. ' = ' .. (self.stats.top1*100.0/self.stats.total) .. '%')
+  print('  Top 5 accuracy: ' .. self.stats.top5 .. '/' .. self.stats.total .. ' = ' .. (self.stats.top5*100.0/self.stats.total) .. '%')
 end
 
 return M

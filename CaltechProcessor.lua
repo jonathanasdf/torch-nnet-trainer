@@ -115,28 +115,28 @@ function M.calcStats(pathNames, outputs, labels)
       end
     end
   end
-  return posCorrect, negCorrect, posTotal, negTotal
+  return {posCorrect, negCorrect, posTotal, negTotal}
 end
 
 function M:resetStats()
-  self.posCorrect = 0
-  self.negCorrect = 0
-  self.posTotal = 0
-  self.negTotal = 0
+  self.stats = {}
+  self.stats.posCorrect = 0
+  self.stats.negCorrect = 0
+  self.stats.posTotal = 0
+  self.stats.negTotal = 0
 end
 
-function M:accStats(...)
-  a, b, c, d = ...
-  self.posCorrect = self.posCorrect + a
-  self.negCorrect = self.negCorrect + b
-  self.posTotal = self.posTotal + c
-  self.negTotal = self.negTotal + d
+function M:accStats(new_stats)
+  self.stats.posCorrect = self.stats.posCorrect + new_stats[1]
+  self.stats.negCorrect = self.stats.negCorrect + new_stats[2]
+  self.stats.posTotal = self.stats.posTotal + new_stats[3]
+  self.stats.negTotal = self.stats.negTotal + new_stats[4]
 end
 
 function M:printStats()
-  print('  Accuracy: ' .. (self.posCorrect + self.negCorrect) .. '/' .. (self.posTotal + self.negTotal) .. ' = ' .. ((self.posCorrect + self.negCorrect)*100.0/(self.posTotal + self.negTotal)) .. '%')
-  print('  Positive Accuracy: ' .. self.posCorrect .. '/' .. self.posTotal .. ' = ' .. (self.posCorrect*100.0/self.posTotal) .. '%')
-  print('  Negative Accuracy: ' .. self.negCorrect .. '/' .. self.negTotal .. ' = ' .. (self.negCorrect*100.0/self.negTotal) .. '%')
+  print('  Accuracy: ' .. (self.stats.posCorrect + self.stats.negCorrect) .. '/' .. (self.stats.posTotal + self.stats.negTotal) .. ' = ' .. ((self.stats.posCorrect + self.stats.negCorrect)*100.0/(self.stats.posTotal + self.stats.negTotal)) .. '%')
+  print('  Positive Accuracy: ' .. self.stats.posCorrect .. '/' .. self.stats.posTotal .. ' = ' .. (self.stats.posCorrect*100.0/self.stats.posTotal) .. '%')
+  print('  Negative Accuracy: ' .. self.stats.negCorrect .. '/' .. self.stats.negTotal .. ' = ' .. (self.stats.negCorrect*100.0/self.stats.negTotal) .. '%')
 end
 
 local function findSlidingWindows(path, img, bboxes, scale)
@@ -217,9 +217,7 @@ function M.forward(inputs, deterministic)
   if not(deterministic) then
     return model:forward(inputs)
   else
-    --print(#inputs)
     local outputs = model:forward(inputs, true)
-    --print(#outputs)
     if processor.processorOpts.svm ~= '' then
       outputs = findModuleByName(model, processor.processorOpts.layer).output
     end
@@ -243,19 +241,19 @@ function M.test(pathNames, inputs)
       for j=1,nPatches,opts.batchSize do
         local k = j+opts.batchSize-1
         if k > nPatches then k = nPatches end
-        local res = {processor.testWithLabels(nil, patches[{{j, k}}], labels[{{j, k}}])}
-        aggLoss = aggLoss + res[1]
-        aggTotal = aggTotal + res[2]
-        for l=1,#res-2 do
+        local loss, total, stats = processor.testWithLabels(nil, patches[{{j, k}}], labels[{{j, k}}])
+        aggLoss = aggLoss + loss
+        aggTotal = aggTotal + total
+        for l=1,#stats do
           if not(aggStats[l]) then aggStats[l] = 0 end
-          aggStats[l] = aggStats[l] + res[l+2]
+          aggStats[l] = aggStats[l] + stats[l]
         end
       end
       scale = scale * processor.processorOpts.windowDownscaling
     end
   end
   collectgarbage()
-  return aggLoss, aggTotal, unpack(aggStats)
+  return aggLoss, aggTotal, aggStats
 end
 
 return M

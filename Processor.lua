@@ -159,7 +159,7 @@ function M.calcStats(pathNames, outputs, labels) end
 -- Called before each validation/test run
 function M:resetStats() end
 -- Accumulate stats from the result of calcStats
-function M:accStats(...) end
+function M:accStats(new_stats) end
 -- Called after each validation/test run
 function M:printStats() end
 
@@ -170,10 +170,10 @@ function M.testWithLabels(pathNames, inputs, labels)
 
   --Assumes criterion.sizeAverage = false
   local loss = processor.criterion:forward(outputs, labels)
-  local stats = {processor.calcStats(pathNames, outputs, labels)}
+  local stats = processor.calcStats(pathNames, outputs, labels)
   mutex:unlock()
 
-  return loss, labels:size(1), unpack(stats)
+  return loss, labels:size(1), stats
 end
 
 function M.test(pathNames, inputs)

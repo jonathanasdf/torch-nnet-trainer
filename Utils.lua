@@ -46,19 +46,19 @@ function processArgs(cmd)
     opts.nThreads = math.max(1, opts.nGPU)
     print('\27[31mThere is currently a bug when nThreads > nGPU. Setting nThreads to ' .. opts.nThreads .. '.\27[0m')
   end
-  if opts.cacheEvery and opts.cacheEvery ~= -1 and opts.nThreads > 0 then
+  if opts.LR and opts.cacheEvery ~= -1 and opts.nThreads > 0 then
     print('\27[31mThere is currently a bug with saving model when nThreads > 0. Disabling caching.\27[0m')
     opts.cacheEvery = -1
   end
-  if opts.batchSize <= 1 then
-    error('Sorry, this framework only supports batchSize > 1.')
+  if opts.batchSize <= 2 then
+    error('Sorry, this framework only supports batchSize > 2.')
   end
   if opts.valBatchSize then
     if opts.valBatchSize == -1 then
       opts.valBatchSize = opts.batchSize
     end
-    if opts.valBatchSize <= 1 then
-      error('Sorry, this framework only supports valBatchSize > 1.')
+    if opts.valBatchSize <= 2 then
+      error('Sorry, this framework only supports valBatchSize > 2.')
     end
   end
 
@@ -125,7 +125,10 @@ function processArgs(cmd)
     )
   else
     threads = {}
-    threads.addjob = function(self, f1, f2, ...) f2(f1(...)) end
+    threads.addjob = function(self, f1, f2, ...)
+      local r = {f1(...)}
+      if f2 then f2(unpack(r)) end
+    end
     threads.synchronize = function() end
   end
 end

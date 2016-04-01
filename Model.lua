@@ -78,8 +78,8 @@ local function updateModel(model, gradParameters)
     jobDone()
 end
 
-local function accValResults(model, loss, cnt, ...)
-  opts.processor:accStats(...)
+local function accValResults(model, loss, cnt, stats)
+  opts.processor:accStats(stats)
   model.validLoss = model.validLoss + loss
   model.validCount = model.validCount + cnt
   jobDone()
