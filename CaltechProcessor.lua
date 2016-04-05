@@ -139,7 +139,7 @@ function M:printStats()
   print('  Negative Accuracy: ' .. self.stats.negCorrect .. '/' .. self.stats.negTotal .. ' = ' .. (self.stats.negCorrect*100.0/self.stats.negTotal) .. '%')
 end
 
-local function findSlidingWindows(path, img, bboxes, scale)
+local function findSlidingWindows(patches, labels, path, img, bboxes, scale, start, count)
   local min = math.min
   local max = math.max
   local floor = math.floor
@@ -153,33 +153,41 @@ local function findSlidingWindows(path, img, bboxes, scale)
   local h = img:size(2)
   local w = img:size(3)
   local c = img:size(1)
+  local nPatches = ceil((h-sizey+1)/sy)*ceil((w-sizex+1)/sx)
+  if start > nPatches then
+    return false
+  end
+  local finish = min(start + count - 1, nPatches)
+  if finish == nPatches - 1 then finish = nPatches - 2 end
+  count = finish - start + 1
+
+  patches:resize(count, c, sz, sz)
+  labels:resize(count):fill(1)
+
   if img.getDevice then
     img = img:permute(2, 3, 1)
   end
 
-  local nPatches = ceil((h-sizey+1)/sy)*ceil((w-sizex+1)/sx)
-  local patches = {}
-
-  local count = 0
+  local id = 0
+  local cnt = 0
   local nCols = 0
   for j=1,h-sizey+1,sy do
     for k=1,w-sizex+1,sx do
-      count = count + 1
+      id = id + 1
       if j == 1 then nCols = nCols + 1 end
-      if img.getDevice then
-        assert(c == 3)
-        local window = img[{{j, j+sizey-1}, {k, k+sizex-1}}]:clone()
-        patches[count] = cv.cuda.resize{window, {sz, sz}}:permute(3, 1, 2)
-      else
-        patches[count] = image.scale(img[{{}, {j, j+sizey-1}, {k, k+sizex-1}}], sz, sz)
+      if id >= start and id <= finish then
+        cnt = cnt + 1
+        if img.getDevice then
+          assert(c == 3)
+          local window = img[{{j, j+sizey-1}, {k, k+sizex-1}}]:clone()
+          patches[cnt] = cv.cuda.resize{window, {sz, sz}}:permute(3, 1, 2)
+        else
+          patches[cnt] = image.scale(img[{{}, {j, j+sizey-1}, {k, k+sizex-1}}], sz, sz):cuda()
+        end
       end
     end
   end
-  assert(count == nPatches)
-  patches = tableToBatchTensor(patches)
-  if nGPU > 0 and not(patches.getDevice) then patches = patches:cuda() end
 
-  local labels = torch.ones(nPatches)
   if bboxes:nElement() ~= 0 then
     local SA = sizex*sizey
     for i=1,bboxes:size(1) do
@@ -195,22 +203,25 @@ local function findSlidingWindows(path, img, bboxes, scale)
       local bottom = floor(YB2/sy)
       for j=top,bottom do
         for k=left,right do
-          local XA1 = k*sx
-          local XA2 = k*sx+sizex
-          local YA1 = j*sy
-          local YA2 = j*sy+sizey
+          id = j*nCols+k+1
+          if id >= start and id <= finish then
+            local XA1 = k*sx
+            local XA2 = k*sx+sizex
+            local YA1 = j*sy
+            local YA2 = j*sy+sizey
 
-          local SI = max(0, min(XA2, XB2) - max(XA1, XB1)) *
-                     max(0, min(YA2, YB2) - max(YA1, YB1))
-          local SU = SA + SB - SI
-          if SI/SU > processor.processorOpts.windowIOU then
-            labels[j*nCols+k+1] = 2
+            local SI = max(0, min(XA2, XB2) - max(XA1, XB1)) *
+                       max(0, min(YA2, YB2) - max(YA1, YB1))
+            local SU = SA + SB - SI
+            if SI/SU > processor.processorOpts.windowIOU then
+              labels[id-start+1] = 2
+            end
           end
         end
       end
     end
   end
-  return patches, labels
+  return true
 end
 
 function M.forward(inputs, deterministic)
@@ -226,9 +237,16 @@ function M.forward(inputs, deterministic)
 end
 
 function M.test(pathNames, inputs)
+  local min = math.min
   local aggLoss = 0
   local aggTotal = 0
   local aggStats = {}
+  local patches = torch.Tensor()
+  local labels = torch.Tensor()
+  if nGPU > 0 then
+    patches = patches:cuda()
+    labels = labels:cuda()
+  end
   local nInputs = #pathNames
   for i=1,nInputs do
     local path = pathNames[i]
@@ -236,18 +254,17 @@ function M.test(pathNames, inputs)
     local index = tonumber(paths.basename(path, 'png'))
     local scale = 1
     for s=0,processor.processorOpts.windowScales do
-      local patches, labels = findSlidingWindows(path, inputs[i], bboxes[index], scale)
-      local nPatches = labels:size(1)
-      for j=1,nPatches,opts.batchSize do
-        local k = j+opts.batchSize-1
-        if k > nPatches then k = nPatches end
-        local loss, total, stats = processor.testWithLabels(nil, patches[{{j, k}}], labels[{{j, k}}])
+      local start = 1
+      while true do
+        if not findSlidingWindows(patches, labels, path, inputs[i], bboxes[index], scale, start, opts.batchSize) then break end
+        local loss, total, stats = processor.testWithLabels(nil, patches, labels)
         aggLoss = aggLoss + loss
         aggTotal = aggTotal + total
         for l=1,#stats do
           if not(aggStats[l]) then aggStats[l] = 0 end
           aggStats[l] = aggStats[l] + stats[l]
         end
+        start = start + labels:size(1)
       end
       scale = scale * processor.processorOpts.windowDownscaling
     end

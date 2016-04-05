@@ -42,23 +42,15 @@ function processArgs(cmd)
       print('Not enough threads to use all gpus. Increasing nThreads to ' .. opts.nThreads)
     end
   end
-  if opts.nThreads > math.max(1, opts.nGPU) and not(opts.replicateModel) then
-    opts.nThreads = math.max(1, opts.nGPU)
-    print('\27[31mThere is currently a bug when nThreads > nGPU. Setting nThreads to ' .. opts.nThreads .. '.\27[0m')
-  end
-  if opts.LR and opts.cacheEvery ~= -1 and opts.nThreads > 0 then
-    print('\27[31mThere is currently a bug with saving model when nThreads > 0. Disabling caching.\27[0m')
-    opts.cacheEvery = -1
-  end
   if opts.batchSize <= 2 then
-    error('Sorry, this framework only supports batchSize > 2.')
+    error('Sorry, this framework only supports batchSize > 3.')
   end
   if opts.valBatchSize then
     if opts.valBatchSize == -1 then
       opts.valBatchSize = opts.batchSize
     end
     if opts.valBatchSize <= 2 then
-      error('Sorry, this framework only supports valBatchSize > 2.')
+      error('Sorry, this framework only supports valBatchSize > 3.')
     end
   end
 
@@ -118,6 +110,7 @@ function processArgs(cmd)
         local ceil = math.ceil
       end,
       function()
+        cudnn.benchmark = true
         opts = opt
         nGPU = opts.nGPU
         nThreads = opts.nThreads

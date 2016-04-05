@@ -153,19 +153,12 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, preprocessFn, worker
   startJobs(epochSize-startIdx+1)
 
   local indexStart = (startIdx-1) * batchSize + 1
-  local indexEnd = min(indexStart + batchSize - 1, self:size())
   for i=startIdx,epochSize do
-    local nextStart = indexEnd + 1
-    local nextEnd = min(nextStart + batchSize - 1, self:size())
-    if indexEnd < self:size() and nextEnd == nextStart then
-      -- next batch will be size 1, which we want to avoid
-      indexEnd = indexEnd - 1
-      nextStart = nextStart - 1
-    end
+    local indexEnd = min(indexStart + batchSize - 1, self:size())
+    if indexEnd == self:size()-1 then indexEnd = self:size()-2 end
     local pathNames = self:get(indexStart, indexEnd, perm)
     threads:addjob(self.loadInputs, resultHandler, pathNames, preprocessFn, workerFn)
-    indexStart = nextStart
-    indexEnd = nextEnd
+    indexStart = indexEnd + 1
   end
   threads:synchronize()
 end

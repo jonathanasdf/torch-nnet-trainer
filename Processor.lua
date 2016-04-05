@@ -58,6 +58,7 @@ function M:initializeThreads()
               model = localModel:clone('weight', 'bias')
               model.parameters, model.gradParameters = model.model:getParameters()
             end
+            collectgarbage(); collectgarbage()
             isReplica = __threadid ~= nDevices
             if isReplica then
               mutex = {}
