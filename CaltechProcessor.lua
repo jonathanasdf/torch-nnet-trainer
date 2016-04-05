@@ -226,6 +226,7 @@ function M.forward(inputs, deterministic)
 end
 
 function M.test(pathNames, inputs)
+  local min = math.min
   local aggLoss = 0
   local aggTotal = 0
   local aggStats = {}
@@ -238,9 +239,10 @@ function M.test(pathNames, inputs)
     for s=0,processor.processorOpts.windowScales do
       local patches, labels = findSlidingWindows(path, inputs[i], bboxes[index], scale)
       local nPatches = labels:size(1)
-      for j=1,nPatches,opts.batchSize do
-        local k = j+opts.batchSize-1
-        if k > nPatches then k = nPatches end
+      local j = 1
+      while j <= nPatches do
+        local k = min(j+opts.batchSize-1, nPatches)
+        if k == nPatches-1 then k = nPatches-2 end
         local loss, total, stats = processor.testWithLabels(nil, patches[{{j, k}}], labels[{{j, k}}])
         aggLoss = aggLoss + loss
         aggTotal = aggTotal + total
@@ -248,6 +250,7 @@ function M.test(pathNames, inputs)
           if not(aggStats[l]) then aggStats[l] = 0 end
           aggStats[l] = aggStats[l] + stats[l]
         end
+        j = k+1
       end
       scale = scale * processor.processorOpts.windowDownscaling
     end

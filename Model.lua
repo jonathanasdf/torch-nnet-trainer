@@ -14,6 +14,7 @@ function M:__init(path)
     self.backend = 'nn'
   else
     self.backend = 'cudnn'
+    cudnn.benchmark = true
   end
 
   if path then
@@ -164,6 +165,9 @@ end
 
 function M:save(filename)
   self:clearState()
+  augmentThreadState(function()
+    model:clearState()
+  end)
   torch.save(filename, self.model)
   opts.optimState.dfdx = nil
   torch.save(filename .. '.optimState', opts.optimState)
