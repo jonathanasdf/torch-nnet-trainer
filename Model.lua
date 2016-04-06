@@ -97,11 +97,11 @@ function M:train(trainFn, valFn)
     valFn = opts.processor.test
   end
 
-  local trainLoader = DataLoader{path = opts.input}
+  local trainLoader = DataLoader{inputs = opts.input, weights = opts.inputWeights}
 
   local validLoader
   if opts.val ~= '' then
-    validLoader = DataLoader{path = opts.val, randomize = true}
+    validLoader = DataLoader{inputs = opts.val, randomize = true}
   end
 
   if opts.optimState ~= '' then
@@ -132,7 +132,7 @@ function M:train(trainFn, valFn)
 
     trainLoader:runAsync(opts.batchSize,
                          opts.epochSize,
-                         true, --shuffle
+                         true, --randomSample
                          bindPost(opts.processor.preprocessFn, true),
                          trainFn,
                          bind(updateModel, self))
@@ -143,7 +143,7 @@ function M:train(trainFn, valFn)
       opts.processor:resetStats()
       validLoader:runAsync(opts.valBatchSize,
                            opts.valSize,
-                           false, --don't shuffle
+                           false, --randomSample
                            bindPost(opts.processor.preprocessFn, false),
                            valFn,
                            bind(accValResults, self))

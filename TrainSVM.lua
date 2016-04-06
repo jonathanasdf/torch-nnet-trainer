@@ -40,10 +40,10 @@ local function accumulateData(arr)
   jobDone()
 end
 
-DataLoader{path = opts.input}:runAsync(
+DataLoader{inputs = opts.input}:runAsync(
   opts.batchSize,
   opts.epochSize,
-  true,           -- shuffle,
+  true,           -- randomSample,
   bindPost(opts.processor.preprocessFn, true),
   getData,
   accumulateData)

@@ -1,6 +1,7 @@
 cv = require 'cv'
 require 'cv.cudawarping'
 require 'cv.imgcodecs'
+require 'draw'
 require 'fbnn'
 matio = require 'matio'
 require 'svm'
@@ -11,8 +12,8 @@ local M = torch.class('CaltechProcessor', 'Processor')
 local function defineSlidingWindowOptions(cmd)
   cmd:option('-windowSizeX', 30, 'width of sliding window')
   cmd:option('-windowSizeY', 50, 'height of sliding window')
-  cmd:option('-windowStrideX', 15, 'horizontal stride of sliding window')
-  cmd:option('-windowStrideY', 25, 'vertical stride of sliding window')
+  cmd:option('-windowStrideX', 0.5, 'horizontal stride of sliding window as fraction of width')
+  cmd:option('-windowStrideY', 0.5, 'vertical stride of sliding window as fraction of height')
   cmd:option('-windowScales', 2, 'how many times to downscale window (0 = no downscaling)')
   cmd:option('-windowDownscaling', 0.75, 'what percent to downscale window')
   cmd:option('-windowIOU', 0.5, 'what IOU to count as a positive example')
@@ -160,8 +161,8 @@ local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scal
   processor.windowSizeX = sizex
   local sizey = ceil(processor.processorOpts.windowSizeY * scale)
   processor.windowSizeY = sizey
-  local sx = max(1, floor(processor.processorOpts.windowStrideX * scale))
-  local sy = max(1, floor(processor.processorOpts.windowStrideY * scale))
+  local sx = max(1, floor(processor.processorOpts.windowStrideX * sizex))
+  local sy = max(1, floor(processor.processorOpts.windowStrideY * sizey))
   local h = img:size(2)
   local w = img:size(3)
   local c = img:size(1)
@@ -212,10 +213,6 @@ local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scal
       local YB1 = bboxes[i][2]
       local YB2 = bboxes[i][2]+bboxes[i][4]
       local SB = bboxes[i][3]*bboxes[i][4]
-
-      if processor.processorOpts.drawBoxes ~= '' and color then
-        draw.rectangle(processor.currentImage, XB1, YB1, XB2, YB2, 1, {1.0, 1.0, 0})
-      end
 
       local left = max(0, ceil((XB1-sizex)/sx))
       local right = floor(XB2/sx)
@@ -296,6 +293,14 @@ function M.test(pathNames, inputs)
       scale = scale * processor.processorOpts.windowDownscaling
     end
     if outdir and bboxes[index]:nElement() ~= 0 then
+      for j=1,bboxes[index]:size(1) do
+        local bbox = bboxes[index][j]
+        local XB1 = bbox[1]
+        local XB2 = bbox[1]+bbox[3]
+        local YB1 = bbox[2]
+        local YB2 = bbox[2]+bbox[4]
+        draw.rectangle(processor.currentImage, XB1, YB1, XB2, YB2, 1, {1.0, 1.0, 0})
+      end
       image.save(outdir .. paths.basename(path), processor.currentImage)
     end
   end

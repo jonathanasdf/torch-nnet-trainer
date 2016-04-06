@@ -16,6 +16,7 @@ function defineTrainingOptions(cmd)
   cmd:option('-LR', 0.001, 'learning rate')
   cmd:option('-momentum', 0.9, 'momentum')
   cmd:option('-weightDecay', 0.0005, 'weight decay')
+  cmd:option('-inputWeights', '', 'comma separated weights to balance input classes for each batch')
   cmd:option('-epochs', 50, 'num epochs')
   cmd:option('-updateEvery', 1, 'update model with sgd every n batches')
   cmd:option('-cacheEvery', 20, 'save model every n epochs. Set to -1 or a value >epochs to disable')
@@ -60,6 +61,19 @@ function processArgs(cmd)
   if not opts.updateEvery then opts.updateEvery = 1 end
   opts.batchCount = opts.batchSize * opts.updateEvery
   if opts.LR then opts.LR = opts.LR / opts.batchCount end
+
+  if opts.input then
+    opts.input = opts.input:split(';')
+  end
+  if opts.val and opts.val ~= '' then
+    opts.val = opts.val:split(';')
+  end
+  if opts.inputWeights then
+    opts.inputWeights = opts.inputWeights:split(';')
+    for i=1,#opts.inputWeights do
+      opts.inputWeights[i] = tonumber(opts.inputWeights[i])
+    end
+  end
 
   if opts.output and opts.output ~= '' then
     opts.dirname = paths.dirname(opts.output) .. '/'
@@ -156,7 +170,7 @@ end
 
 function requirePath(path)
   local oldPackagePath = package.path
-  package.path = paths.dirname(path) .. '/?.lua' .. ';' .. package.path
+  package.path = paths.dirname(path) .. '/?.lua;' .. package.path
   local M = require(paths.basename(path, 'lua'))
   package.path = oldPackagePath
   return M
@@ -215,7 +229,8 @@ function convertTensorToSVMLight(labels, tensor)
 end
 
 function string:split(sep)
-  local sep, fields = sep or ',', {}
+  sep = sep or ','
+  local fields = {}
   local pattern = string.format('([^%s]+)', sep)
   self:gsub(pattern, function(c) fields[#fields+1] = c end)
   return fields
