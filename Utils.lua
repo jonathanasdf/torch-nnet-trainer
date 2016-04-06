@@ -96,6 +96,7 @@ function processArgs(cmd)
         require 'cv.cudawarping'
         require 'cv.imgcodecs'
         require 'dpnn'
+        require 'draw'
         require 'fbnn'
         require 'image'
         require 'paths'

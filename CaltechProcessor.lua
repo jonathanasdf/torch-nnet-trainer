@@ -23,6 +23,7 @@ function M:__init()
   self.cmd:option('-negativesWeight', 1, 'Relative weight of negative examples')
   self.cmd:option('-svm', '', 'SVM to use')
   self.cmd:option('-layer', 'fc7', 'layer to use as SVM input')
+  self.cmd:option('-drawBoxes', '', 'set a directory to save images of losses')
   defineSlidingWindowOptions(self.cmd)
   Processor.__init(self)
 
@@ -103,16 +104,25 @@ function M.calcStats(pathNames, outputs, labels)
   local posTotal = 0
   local negTotal = 0
   for i=1,labels:size(1) do
+    local color
     if labels[i] == 2 then
       posTotal = posTotal + 1
       if pred[i] == 2 then
         posCorrect = posCorrect + 1
+        color = {0, 1.0, 0} -- green - true positive
+      else
+        color = {1.0, 0, 0} -- red - false negative
       end
     else
       negTotal = negTotal + 1
       if pred[i] == 1 then
         negCorrect = negCorrect + 1
+      else
+        color = {0, 0, 1.0} -- blue - false positive
       end
+    end
+    if processor.processorOpts.drawBoxes ~= '' and color then
+      draw.rectangle(processor.currentImage, processor.windowX[i], processor.windowY[i], processor.windowX[i] + processor.windowSizeX - 1, processor.windowY[i] + processor.windowSizeY - 1, 1, color)
     end
   end
   return {posCorrect, negCorrect, posTotal, negTotal}
@@ -139,7 +149,7 @@ function M:printStats()
   print('  Negative Accuracy: ' .. self.stats.negCorrect .. '/' .. self.stats.negTotal .. ' = ' .. (self.stats.negCorrect*100.0/self.stats.negTotal) .. '%')
 end
 
-local function findSlidingWindows(patches, labels, path, img, bboxes, scale, start, count)
+local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scale, start)
   local min = math.min
   local max = math.max
   local floor = math.floor
@@ -147,7 +157,9 @@ local function findSlidingWindows(patches, labels, path, img, bboxes, scale, sta
 
   local sz = processor.processorOpts.imageSize
   local sizex = ceil(processor.processorOpts.windowSizeX * scale)
+  processor.windowSizeX = sizex
   local sizey = ceil(processor.processorOpts.windowSizeY * scale)
+  processor.windowSizeY = sizey
   local sx = max(1, floor(processor.processorOpts.windowStrideX * scale))
   local sy = max(1, floor(processor.processorOpts.windowStrideY * scale))
   local h = img:size(2)
@@ -157,12 +169,12 @@ local function findSlidingWindows(patches, labels, path, img, bboxes, scale, sta
   if start > nPatches then
     return false
   end
-  local finish = min(start + count - 1, nPatches)
+  local finish = min(start + opts.batchSize - 1, nPatches)
   if finish == nPatches - 1 then finish = nPatches - 2 end
-  count = finish - start + 1
+  local count = finish - start + 1
 
-  patches:resize(count, c, sz, sz)
-  labels:resize(count):fill(1)
+  outputPatches:resize(count, c, sz, sz)
+  outputLabels:resize(count):fill(1)
 
   if img.getDevice then
     img = img:permute(2, 3, 1)
@@ -171,6 +183,8 @@ local function findSlidingWindows(patches, labels, path, img, bboxes, scale, sta
   local id = 0
   local cnt = 0
   local nCols = 0
+  processor.windowX = {}
+  processor.windowY = {}
   for j=1,h-sizey+1,sy do
     for k=1,w-sizex+1,sx do
       id = id + 1
@@ -180,10 +194,12 @@ local function findSlidingWindows(patches, labels, path, img, bboxes, scale, sta
         if img.getDevice then
           assert(c == 3)
           local window = img[{{j, j+sizey-1}, {k, k+sizex-1}}]:clone()
-          patches[cnt] = cv.cuda.resize{window, {sz, sz}}:permute(3, 1, 2)
+          outputPatches[cnt] = cv.cuda.resize{window, {sz, sz}}:permute(3, 1, 2)
         else
-          patches[cnt] = image.scale(img[{{}, {j, j+sizey-1}, {k, k+sizex-1}}], sz, sz):cuda()
+          outputPatches[cnt] = image.scale(img[{{}, {j, j+sizey-1}, {k, k+sizex-1}}], sz, sz):cuda()
         end
+        processor.windowX[cnt] = k
+        processor.windowY[cnt] = j
       end
     end
   end
@@ -196,6 +212,10 @@ local function findSlidingWindows(patches, labels, path, img, bboxes, scale, sta
       local YB1 = bboxes[i][2]
       local YB2 = bboxes[i][2]+bboxes[i][4]
       local SB = bboxes[i][3]*bboxes[i][4]
+
+      if processor.processorOpts.drawBoxes ~= '' and color then
+        draw.rectangle(processor.currentImage, XB1, YB1, XB2, YB2, 1, {1.0, 1.0, 0})
+      end
 
       local left = max(0, ceil((XB1-sizex)/sx))
       local right = floor(XB2/sx)
@@ -214,7 +234,7 @@ local function findSlidingWindows(patches, labels, path, img, bboxes, scale, sta
                        max(0, min(YA2, YB2) - max(YA1, YB1))
             local SU = SA + SB - SI
             if SI/SU > processor.processorOpts.windowIOU then
-              labels[id-start+1] = 2
+              outputLabels[id-start+1] = 2
             end
           end
         end
@@ -225,15 +245,16 @@ local function findSlidingWindows(patches, labels, path, img, bboxes, scale, sta
 end
 
 function M.forward(inputs, deterministic)
+  local outputs
   if not(deterministic) then
-    return model:forward(inputs)
+    outputs = model:forward(inputs)
   else
-    local outputs = model:forward(inputs, true)
-    if processor.processorOpts.svm ~= '' then
-      outputs = findModuleByName(model, processor.processorOpts.layer).output
-    end
-    return outputs
+    outputs = model:forward(inputs, true)
   end
+  if processor.processorOpts.svm ~= '' then
+    outputs = findModuleByName(model, processor.processorOpts.layer).output
+  end
+  return outputs
 end
 
 function M.test(pathNames, inputs)
@@ -247,16 +268,22 @@ function M.test(pathNames, inputs)
     patches = patches:cuda()
     labels = labels:cuda()
   end
+  local outdir
+  if processor.processorOpts.drawBoxes ~= '' then
+    outdir = processor.processorOpts.drawBoxes .. '/'
+    paths.mkdir(outdir)
+  end
   local nInputs = #pathNames
   for i=1,nInputs do
     local path = pathNames[i]
+    processor.currentImage = image.load(path, 3)
     local bboxes = processor.bboxes[path:find('val') and 1 or 2]
     local index = tonumber(paths.basename(path, 'png'))
     local scale = 1
     for s=0,processor.processorOpts.windowScales do
       local start = 1
       while true do
-        if not findSlidingWindows(patches, labels, path, inputs[i], bboxes[index], scale, start, opts.batchSize) then break end
+        if not findSlidingWindows(patches, labels, inputs[i], bboxes[index], scale, start) then break end
         local loss, total, stats = processor.testWithLabels(nil, patches, labels)
         aggLoss = aggLoss + loss
         aggTotal = aggTotal + total
@@ -267,6 +294,9 @@ function M.test(pathNames, inputs)
         start = start + labels:size(1)
       end
       scale = scale * processor.processorOpts.windowDownscaling
+    end
+    if outdir and bboxes[index]:nElement() ~= 0 then
+      image.save(outdir .. paths.basename(path), processor.currentImage)
     end
   end
   collectgarbage()
