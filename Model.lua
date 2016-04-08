@@ -25,8 +25,8 @@ function M:__init(path)
   print('=> Model')
   print(self.model)
 
-  self.parameters, self.gradParameters = self:getParameters()
-  print('Total parameters: ', self.gradParameters:size(1))
+  self.params, self.gradParams = self:getParameters()
+  print('Total parameters: ', self.gradParams:size(1))
 end
 
 local function loadSavedModel(filename, backend)
@@ -68,10 +68,10 @@ function M:forward(inputs, deterministic)
   return self.model:forward(inputs)
 end
 
-local function updateModel(model, gradParameters)
+local function updateModel(model, gradParams)
     opts.trainIter = opts.trainIter + 1
-    if gradParameters then
-      model.gradParameters:add(gradParameters)
+    if gradParams then
+      model.gradParams:add(gradParams)
     end
     if opts.trainIter % opts.updateEvery == 0 then
       opts.processor:updateModel()
@@ -97,11 +97,11 @@ function M:train(trainFn, valFn)
     valFn = opts.processor.test
   end
 
-  local trainLoader = DataLoader{path = opts.input}
+  local trainLoader = DataLoader{inputs = opts.input, weights = opts.inputWeights}
 
   local validLoader
   if opts.val ~= '' then
-    validLoader = DataLoader{path = opts.val, randomize = true}
+    validLoader = DataLoader{inputs = opts.val, randomize = true}
   end
 
   if opts.optimState ~= '' then
@@ -132,7 +132,7 @@ function M:train(trainFn, valFn)
 
     trainLoader:runAsync(opts.batchSize,
                          opts.epochSize,
-                         true, --shuffle
+                         true, --randomSample
                          bindPost(opts.processor.preprocessFn, true),
                          trainFn,
                          bind(updateModel, self))
@@ -143,7 +143,7 @@ function M:train(trainFn, valFn)
       opts.processor:resetStats()
       validLoader:runAsync(opts.valBatchSize,
                            opts.valSize,
-                           false, --don't shuffle
+                           false, --randomSample
                            bindPost(opts.processor.preprocessFn, false),
                            valFn,
                            bind(accValResults, self))

@@ -17,8 +17,7 @@ local model = Model(opts.model)
 opts.processor.model = model
 opts.processor:initializeThreads()
 opts.processor:resetStats()
-
-local loader = DataLoader{path = opts.input, randomize = true}
+local loader = DataLoader{inputs = opts.input, randomize = true}
 local state = {shuffle = loader.shuffle, completed = 0}
 opts.cacheFile = os.tmpname()
 if opts.resume ~= '' then
@@ -43,9 +42,9 @@ end
 loader:runAsync(
   opts.batchSize,
   opts.epochSize,
-  false,               -- shuffle,
+  false,               -- randomSample,
   bindPost(opts.processor.preprocessFn, false),
   opts.processor.test,
   accResults,
-  state.completed + 1) -- startIdx
+  state.completed + 1) -- startBatch
 opts.processor:printStats()

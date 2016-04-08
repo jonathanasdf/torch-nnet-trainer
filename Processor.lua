@@ -39,7 +39,7 @@ function M:initializeThreads()
     if device ~= 1 then
       cutorch.setDevice(device)
       localModel = localModel:clone()
-      localModel.parameters, localModel.gradParameters = localModel.model:getParameters()
+      localModel.params, localModel.gradParams = localModel:getParameters()
     end
     models[device] = localModel
     -- Separate mutex for each GPU
@@ -56,7 +56,7 @@ function M:initializeThreads()
               model = localModel
             else
               model = localModel:clone('weight', 'bias')
-              model.parameters, model.gradParameters = model.model:getParameters()
+              model.params, model.gradParams = model:getParameters()
             end
             collectgarbage(); collectgarbage()
             isReplica = __threadid ~= nDevices
@@ -103,23 +103,23 @@ function M.forward(inputs, deterministic)
   return model:forward(inputs, deterministic)
 end
 
--- Return gradParameters if isReplica, otherwise accumulate gradients in model and return nil
+-- Return gradParams if isReplica, otherwise accumulate gradients in model and return nil
 function M.backward(inputs, gradOutputs)
-  local gradParameters
+  local gradParams
   if isReplica then
     model:zeroGradParameters()
     model:backward(inputs, gradOutputs)
-    if nGPU > 0 and model.gradParameters:getDevice() ~= 1 then
+    if nGPU > 0 and model.gradParams:getDevice() ~= 1 then
       cutorch.setDevice(1)
-      gradParameters = model.gradParameters:clone()
+      gradParams = model.gradParams:clone()
       cutorch.setDevice(gpu)
     else
-      gradParameters = model.gradParameters:clone()
+      gradParams = model.gradParams:clone()
     end
   else
     model:backward(inputs, gradOutputs)
   end
-  return gradParameters
+  return gradParams
 end
 
 -- Performs a forward and backward pass through the model
@@ -135,21 +135,22 @@ function M.train(pathNames, inputs)
   --Assumes criterion.sizeAverage = false
   processor.criterion:forward(outputs, labels)
   local gradOutputs = processor.criterion:backward(outputs, labels)
-  local gradParameters = processor.backward(inputs, gradOutputs)
+  local gradParams = processor.backward(inputs, gradOutputs)
   mutex:unlock()
-  return gradParameters
+  return gradParams
 end
 
 function M:updateModel()
   self.mutexes[1]:lock()
-  optim.sgd(function() return 0, self.model.gradParameters end, self.model.parameters, opts.optimState)
+  local p = self.model.params:clone()
+  optim.sgd(function() return 0, self.model.gradParams / opts.batchCount end, self.model.params, opts.optimState)
   self.model:zeroGradParameters()
   self.mutexes[1]:unlock()
 
   for i=2,nGPU do
     cutorch.setDevice(i)
     self.mutexes[i]:lock()
-    self.models[i].parameters:copy(self.model.parameters:clone())
+    self.models[i].params:copy(self.model.params:clone())
     self.mutexes[i]:unlock()
   end
   cutorch.setDevice(1)

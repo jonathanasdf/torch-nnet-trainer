@@ -4,16 +4,41 @@ require 'xlua'
 
 require 'Utils'
 
-local argcheck = require 'argcheck'
-local initcheck = argcheck{
+local initcheck = require 'argcheck'{
   pack=true,
+  noordered=true,
   help=[[
     A data loader class for loading images optimized for extremely large datasets.
     Tested only on Linux (as it uses command-line linux utilities to scale up)
   ]],
-  {name='path',
-   type='string',
-   help='path of directories with images'},
+  {name='inputs',
+   type='table',
+   check=function(inputs)
+     local out = true
+     for k,v in ipairs(inputs) do
+       if type(v) ~= 'string' then
+         print('inputs can only be of string input')
+         out = false
+       end
+     end
+     return out
+   end,
+   help='input directories with images'},
+
+  {name='weights',
+   type='table',
+   check=function(weights)
+     local out = true
+     for k,v in ipairs(weights) do
+       if type(v) ~= 'number' then
+         print('weights can only be of number input')
+         out = false
+       end
+     end
+     return out
+   end,
+   help='input weights to sample with. Only used if randomSampling is used',
+   default={}},
 
   {name='randomize',
    type='boolean',
@@ -30,6 +55,18 @@ function DataLoader:__init(...)
   local args = initcheck(...)
   for k,v in pairs(args) do self[k] = v end
 
+  -- Normalize weights if they exist
+  if #self.weights ~= 0 then
+    assert(#self.weights == #self.inputs)
+    local sum = 0
+    for i,w in ipairs(self.weights) do
+      sum = sum + w
+    end
+    for i=1,#self.weights do
+      self.weights[i] = self.weights[i] / sum
+    end
+  end
+
   ----------------------------------------------------------------------
   -- Options for the GNU find command
   local extensionList = {'jpg', 'png','JPG','PNG','JPEG', 'ppm', 'PPM', 'bmp', 'BMP'}
@@ -40,49 +77,62 @@ function DataLoader:__init(...)
 
   -- find the image paths
   print('Finding images...')
-  if paths.filep(args.path) then
-    self.imageList = args.path
-  else
-    self.imageList = os.tmpname()
-    local tmpfile = os.tmpname()
-    local tmphandle = assert(io.open(tmpfile, 'w'))
-    local command = 'find ' .. args.path .. ' ' .. findOptions .. ' >>"' .. self.imageList .. '" \n'
-    tmphandle:write(command)
-    io.close(tmphandle)
-    os.execute('bash ' .. tmpfile)
-    os.execute('rm -f ' .. tmpfile)
+  self.imageListFile = {}
+  self.imageListHandle = {}
+  self.lineOffset = {}
+  self.numSamples = 0
+  for i=1,#self.inputs do
+    if paths.filep(self.inputs[i]) then
+      self.imageListFile[i] = self.inputs[i]
+    else
+      self.imageListFile[i] = os.tmpname()
+      local tmpfile = os.tmpname()
+      local tmphandle = assert(io.open(tmpfile, 'w'))
+      local command = 'find ' .. self.inputs[i] .. ' ' .. findOptions .. ' >>"' .. self.imageListFile[i] .. '" \n'
+      tmphandle:write(command)
+      io.close(tmphandle)
+      os.execute('bash ' .. tmpfile)
+      os.execute('rm -f ' .. tmpfile)
 
-    --==========================================================================
-    local length = tonumber(sys.fexecute('wc -l "' .. self.imageList .. '" | ' .. 'cut -f1 -d" "'))
-    assert(length > 0, 'Could not find any image file in the given input paths')
+      --==========================================================================
+      local length = tonumber(sys.fexecute('wc -l "' .. self.imageListFile[i] .. '" | ' .. 'cut -f1 -d" "'))
+      assert(length > 0, 'Could not find any image file in the given input paths')
+    end
+
+    self.imageListHandle[i] = io.open(self.imageListFile[i])
+    self.lineOffset[i] = {0}
+    for line in self.imageListHandle[i]:lines() do
+      self.lineOffset[i][#self.lineOffset[i]+1] = self.imageListHandle[i]:seek()
+    end
+    table.remove(self.lineOffset[i])
+
+    self.numSamples = self.numSamples + #self.lineOffset[i]
   end
-
-  self.imagePaths = io.open(self.imageList)
-  self.lineOffset = {0}
-  for line in self.imagePaths:lines() do
-    self.lineOffset[#self.lineOffset+1] = self.imagePaths:seek()
-  end
-  table.remove(self.lineOffset)
-
-  self.numSamples = #self.lineOffset
   print(self.numSamples ..  ' images found.')
 
   if self.randomize then
-    self.shuffle = torch.randperm(self.numSamples)
+    self.shuffle = torch.randperm(self:size())
   end
 end
 
-function DataLoader:size()
-  return self.numSamples
+function DataLoader:size(i)
+  if not i then return self.numSamples end
+  return #self.lineOffset[i]
 end
 
 function DataLoader:retrieve(indices)
-  local pathNames = {}
   local quantity = type(indices) == 'table' and #indices or indices:nElement()
+  local pathNames = {}
   for i=1,quantity do
     -- load the sample
-    self.imagePaths:seek('set', self.lineOffset[indices[i]])
-    pathNames[#pathNames+1] = self.imagePaths:read()
+    local index = self.shuffle and self.shuffle[indices[i]] or indices[i]
+    local j = 1
+    while index > self:size(j) do
+      index = index - self:size(j)
+      j = j + 1
+    end
+    self.imageListHandle[j]:seek('set', self.lineOffset[j][index])
+    pathNames[#pathNames+1] = self.imageListHandle[j]:read()
   end
   return pathNames
 end
@@ -91,18 +141,28 @@ end
 function DataLoader:sample(quantity)
   quantity = quantity or 1
   local indices = {}
-  for i=1,quantity do
-    indices[#indices+1] = ceil(torch.uniform() * self:size())
+  if #self.weights == 0 then
+    indices = torch.ceil(torch.rand(quantity) * self:size())
+  else
+    local j = 1
+    local index = 0
+    for i=1,#self.inputs do
+      local count = i < #self.inputs and self.weights[i] * quantity or quantity - #indices
+      for j=1,count do
+        indices[#indices+1] = index + ceil(torch.uniform() * self:size(i))
+      end
+      index = index + self:size(i)
+    end
   end
   return self:retrieve(indices)
 end
 
-function DataLoader:get(start, endIncl, perm)
+function DataLoader:get(start, endIncl)
   local indices
   if type(start) == 'number' then
     if type(endIncl) == 'number' then -- range of indices
       endIncl = min(endIncl, self:size())
-      indices = torch.range(start, endIncl);
+      indices = torch.range(start, endIncl)
     else -- single index
       indices = {start}
     end
@@ -112,9 +172,6 @@ function DataLoader:get(start, endIncl, perm)
     indices = start -- tensor
   else
     error('Unsupported input types: ' .. type(start) .. ' ' .. type(endIncl))
-  end
-  if perm then
-    indices = perm:index(1, indices:long())
   end
   return self:retrieve(indices)
 end
@@ -133,7 +190,7 @@ function DataLoader.loadInputs(pathNames, preprocessFn, workerFn)
   end
 end
 
-function DataLoader:runAsync(batchSize, epochSize, shuffle, preprocessFn, workerFn, resultHandler, startIdx)
+function DataLoader:runAsync(batchSize, epochSize, randomSample, preprocessFn, workerFn, resultHandler, startBatch)
   if batchSize == -1 then
     batchSize = self:size()
   end
@@ -143,20 +200,15 @@ function DataLoader:runAsync(batchSize, epochSize, shuffle, preprocessFn, worker
   end
   epochSize = min(epochSize, ceil(self:size() * 1.0 / batchSize))
 
-  local perm = self.shuffle
-  if shuffle then
-    perm = torch.randperm(self:size())
-  end
+  startBatch = startBatch or 1
+  if startBatch > epochSize then return end
+  startJobs(epochSize-startBatch+1)
 
-  startIdx = startIdx or 1
-  if startIdx > epochSize then return end
-  startJobs(epochSize-startIdx+1)
-
-  local indexStart = (startIdx-1) * batchSize + 1
-  for i=startIdx,epochSize do
+  local indexStart = (startBatch-1) * batchSize + 1
+  for i=startBatch,epochSize do
     local indexEnd = min(indexStart + batchSize - 1, self:size())
     if indexEnd == self:size()-1 then indexEnd = self:size()-2 end
-    local pathNames = self:get(indexStart, indexEnd, perm)
+    local pathNames = randomSample and self:sample(batchSize) or self:get(indexStart, indexEnd)
     threads:addjob(self.loadInputs, resultHandler, pathNames, preprocessFn, workerFn)
     indexStart = indexEnd + 1
   end

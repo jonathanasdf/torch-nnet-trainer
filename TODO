@@ -1,6 +1,5 @@
 Check why multithread preprocess is not faster
-Enable multithread and caching when cudnn bug is fixed
-Verify that multithread is working correctly
+Log graphs
 Count flops
 Allow for customization of sgd strategy
 Add hard negative mining to TrainSVM.lua
