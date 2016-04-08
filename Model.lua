@@ -25,8 +25,8 @@ function M:__init(path)
   print('=> Model')
   print(self.model)
 
-  self.parameters, self.gradParameters = self:getParameters()
-  print('Total parameters: ', self.gradParameters:size(1))
+  self.params, self.gradParams = self:getParameters()
+  print('Total parameters: ', self.gradParams:size(1))
 end
 
 local function loadSavedModel(filename, backend)
@@ -68,10 +68,10 @@ function M:forward(inputs, deterministic)
   return self.model:forward(inputs)
 end
 
-local function updateModel(model, gradParameters)
+local function updateModel(model, gradParams)
     opts.trainIter = opts.trainIter + 1
-    if gradParameters then
-      model.gradParameters:add(gradParameters)
+    if gradParams then
+      model.gradParams:add(gradParams)
     end
     if opts.trainIter % opts.updateEvery == 0 then
       opts.processor:updateModel()

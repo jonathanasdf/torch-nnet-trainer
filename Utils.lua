@@ -60,7 +60,6 @@ function processArgs(cmd)
 
   if not opts.updateEvery then opts.updateEvery = 1 end
   opts.batchCount = opts.batchSize * opts.updateEvery
-  if opts.LR then opts.LR = opts.LR / opts.batchCount end
 
   if opts.input then
     opts.input = opts.input:split(';')
@@ -197,6 +196,11 @@ function tableToBatchTensor(T)
 end
 
 local RGBBGR = torch.LongTensor{3,2,1}
+function convertRGBBGR(T, dim)
+  if not dim then dim = 1 end
+  return T:index(dim, RGBBGR)
+end
+
 function tensorToCVImg(T)
   if T:dim() == 2 then
     return (T*255):byte()

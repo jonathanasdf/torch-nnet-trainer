@@ -6,25 +6,27 @@ local Processor = require 'Processor'
 local M = torch.class('ImageNetProcessor', 'Processor')
 
 function M:__init()
+  self.cmd:option('-resize', 256, 'What size to crop to.')
   self.cmd:option('-cropSize', 224, 'What size to crop to.')
+  self.cmd:option('-inceptionPreprocessing', false, 'Preprocess for inception models (RGB, [-1, 1))')
+  self.cmd:option('-caffePreprocessing', false, 'Preprocess for caffe models (BGR, [0, 255])')
   Processor.__init(self)
+  assert(self.processorOpts.cropSize <= self.processorOpts.resize)
 
-  assert(self.processorOpts.cropSize <= 256)
-  self.processorOpts.meanPixel = {}
-  self.processorOpts.meanPixel[1] = torch.Tensor{103.939, 116.779, 123.68}:view(1, 1, 3)
-  if nGPU > 0 then
-    self.processorOpts.meanPixel[1] = self.processorOpts.meanPixel[1]:cuda()
-    for i=2,nGPU do
-      cutorch.setDevice(i)
-      self.processorOpts.meanPixel[i] = self.processorOpts.meanPixel[1]:clone()
-    end
-    cutorch.setDevice(1)
+  local synset = '/file/imagenet/ILSVRC2012_devkit_t12/words.txt'
+  if self.processorOpts.inceptionPreprocessing then
+    synset = '/file/imagenet/inception_synset.txt'
+  elseif self.processorOpts.caffePreprocessing then
+    self.processorOpts.meanPixel = torch.Tensor{103.939, 116.779, 123.68}:view(3, 1, 1)
+  else
+    self.processorOpts.meanPixel = torch.Tensor{0.485, 0.456, 0.406}:view(3, 1, 1)
+    self.processorOpts.std = torch.Tensor{0.229, 0.224, 0.225}:view(3, 1, 1)
   end
 
   self.words = {}
   self.lookup = {}
   local n = 1
-  for line in io.lines('/file/imagenet/ILSVRC2012_devkit_t12/words.txt') do
+  for line in io.lines(synset) do
     self.words[#self.words+1] = string.sub(line,11)
     self.lookup[string.sub(line, 1, 9)] = n
     n = n + 1
@@ -44,35 +46,31 @@ function M:__init()
 end
 
 function M.preprocess(path, isTraining, processorOpts)
-  local img = cv.imread{path, cv.IMREAD_COLOR}:float()
+  local img = image.load(path, 3)
+
+  -- find the smaller dimension, and resize it to processorOpts.resize
+  local sz = processorOpts.resize
+  if img:size(3) < img:size(2) then
+    img = image.scale(img, sz, sz * img:size(2) / img:size(3))
+  else
+    img = image.scale(img, sz * img:size(3) / img:size(2), sz)
+  end
+
+  sz = processorOpts.cropSize
+  img = image.crop(img, 'c', sz, sz)
+
+  if processorOpts.inceptionPreprocessing then
+    img = (img * 255 - 128) / 128
+  elseif processorOpts.caffePreprocessing then
+    img = (convertRGBBGR(img) * 255):csub(processorOpts.meanPixel:expandAs(img))
+  else
+    img = img:csub(processorOpts.meanPixel:expandAs(img)):cdiv(processorOpts.std:expandAs(img))
+  end
+
   if nGPU > 0 then
     img = img:cuda()
   end
-
-  -- find the smaller dimension, and resize it to 256
-  if nGPU > 0 then
-    if img:size(2) < img:size(1) then
-      img = cv.cuda.resize{img, {256 * img:size(1) / img:size(2), 256}}
-    else
-      img = cv.cuda.resize{img, {256, 256 * img:size(2) / img:size(1)}}
-    end
-  else
-    img = img:permute(3, 1, 2)
-    if img:size(3) < img:size(2) then
-      img = image.scale(img, 256, 256 * img:size(2) / img:size(3))
-    else
-      img = image.scale(img, 256 * img:size(3) / img:size(2), 256)
-    end
-    img = img:permute(2, 3, 1)
-  end
-
-  local sz = processorOpts.cropSize
-  local iW = img:size(2)
-  local iH = img:size(1)
-  local w1 = math.ceil((iW-sz)/2)
-  local h1 = math.ceil((iH-sz)/2)
-  img = img[{{h1, h1+sz-1}, {w1, w1+sz-1}}] -- center patch
-  return img:csub(processorOpts.meanPixel[gpu]:expandAs(img)):permute(3, 1, 2)
+  return img
 end
 
 function M.getLabels(pathNames)

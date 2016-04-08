@@ -21,6 +21,8 @@ end
 
 function M:__init()
   self.cmd:option('-imageSize', 113, 'What to resize to.')
+  self.cmd:option('-inceptionPreprocessing', false, 'Preprocess for inception models (RGB, [-1, 1))')
+  self.cmd:option('-caffePreprocessing', false, 'Preprocess for caffe models (BGR, [0, 255])')
   self.cmd:option('-negativesWeight', 1, 'Relative weight of negative examples')
   self.cmd:option('-svm', '', 'SVM to use')
   self.cmd:option('-layer', 'fc7', 'layer to use as SVM input')
@@ -28,15 +30,13 @@ function M:__init()
   defineSlidingWindowOptions(self.cmd)
   Processor.__init(self)
 
-  self.processorOpts.meanPixel = {}
-  self.processorOpts.meanPixel[1] = torch.Tensor{103.939, 116.779, 123.68}:view(1, 1, 3)
-  if nGPU > 0 then
-    self.processorOpts.meanPixel[1] = self.processorOpts.meanPixel[1]:cuda()
-    for i=2,nGPU do
-      cutorch.setDevice(i)
-      self.processorOpts.meanPixel[i] = self.processorOpts.meanPixel[1]:clone()
-    end
-    cutorch.setDevice(1)
+  if self.processorOpts.inceptionPreprocessing then
+    -- no mean normalization
+  elseif self.processorOpts.caffePreprocessing then
+    self.processorOpts.meanPixel = torch.Tensor{103.939, 116.779, 123.68}:view(3, 1, 1)
+  else
+    self.processorOpts.meanPixel = torch.Tensor{0.485, 0.456, 0.406}:view(3, 1, 1)
+    self.processorOpts.std = torch.Tensor{0.229, 0.224, 0.225}:view(3, 1, 1)
   end
 
   self.bboxes = {
@@ -62,20 +62,19 @@ function M:initializeThreads()
 end
 
 function M.preprocess(path, isTraining, processorOpts)
-  local img = cv.imread{path, cv.IMREAD_COLOR}:float()
-  if nGPU > 0 then
-    img = img:cuda()
+  local img = image.load(path, 3)
+  if isTraining and (img:size(2) ~= processorOpts.imageSize or img:size(3) ~= processorOpts.imageSize) then
+    img = image.scale(img, processorOpts.imageSize, processorOpts.imageSize)
   end
-  if isTraining and (img:size(1) ~= processorOpts.imageSize or img:size(2) ~= processorOpts.imageSize) then
-    if nGPU > 0 then
-      img = cv.cuda.resize{img, {processorOpts.imageSize, processorOpts.imageSize}}
-    else
-      img = img:permute(3, 1, 2)
-      img = image.scale(img, processorOpts.imageSize, processorOpts.imageSize)
-      img = img:permute(2, 3, 1)
-    end
+
+  if processorOpts.inceptionPreprocessing then
+    img = (img * 255 - 128) / 128
+  elseif processorOpts.caffePreprocessing then
+    img = (convertRGBBGR(img) * 255):csub(processorOpts.meanPixel:expandAs(img))
+  else
+    img = img:csub(processorOpts.meanPixel:expandAs(img)):cdiv(processorOpts.std:expandAs(img))
   end
-  return img:csub(processorOpts.meanPixel[gpu]:expandAs(img)):permute(3, 1, 2)
+  return img
 end
 
 function M.getLabels(pathNames)
@@ -194,7 +193,7 @@ local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scal
         cnt = cnt + 1
         if img.getDevice then
           assert(c == 3)
-          local window = img[{{j, j+sizey-1}, {k, k+sizex-1}}]:clone()
+          local window = img[{{j, j+sizey-1}, {k, k+sizex-1}}]:contiguous()
           outputPatches[cnt] = cv.cuda.resize{window, {sz, sz}}:permute(3, 1, 2)
         else
           outputPatches[cnt] = image.scale(img[{{}, {j, j+sizey-1}, {k, k+sizex-1}}], sz, sz):cuda()
