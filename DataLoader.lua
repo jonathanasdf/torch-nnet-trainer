@@ -207,10 +207,12 @@ function DataLoader:runAsync(batchSize, epochSize, randomSample, preprocessFn, w
   local indexStart = (startBatch-1) * batchSize + 1
   for i=startBatch,epochSize do
     local indexEnd = min(indexStart + batchSize - 1, self:size())
-    if indexEnd == self:size()-1 then indexEnd = self:size()-2 end
     local pathNames = randomSample and self:sample(batchSize) or self:get(indexStart, indexEnd)
     threads:addjob(self.loadInputs, resultHandler, pathNames, preprocessFn, workerFn)
     indexStart = indexEnd + 1
+    if indexStart > self:size() then
+      break
+    end
   end
   threads:synchronize()
 end

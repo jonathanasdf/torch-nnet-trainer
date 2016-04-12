@@ -4,6 +4,7 @@ require 'cv.imgcodecs'
 require 'draw'
 require 'fbnn'
 matio = require 'matio'
+require 'optim'
 require 'svm'
 
 local Processor = require 'Processor'
@@ -90,7 +91,6 @@ function M.calcStats(pathNames, outputs, labels)
   local pred
   if processor.processorOpts.svm == '' then
     _, pred = torch.max(outputs, 2)
-    pred = pred:squeeze()
   else
     if not(processor.processorOpts.svmmodel) then
       processor.processorOpts.svmmodel = torch.load(processor.processorOpts.svm)
@@ -98,26 +98,18 @@ function M.calcStats(pathNames, outputs, labels)
     local data = convertTensorToSVMLight(labels, outputs)
     pred = liblinear.predict(data, processor.processorOpts.svmmodel, '-q')
   end
+  pred = pred:view(-1)
 
-  local posCorrect = 0
-  local negCorrect = 0
-  local posTotal = 0
-  local negTotal = 0
   for i=1,labels:size(1) do
     local color
     if labels[i] == 2 then
-      posTotal = posTotal + 1
       if pred[i] == 2 then
-        posCorrect = posCorrect + 1
         color = {0, 1.0, 0} -- green - true positive
       else
         color = {1.0, 0, 0} -- red - false negative
       end
     else
-      negTotal = negTotal + 1
-      if pred[i] == 1 then
-        negCorrect = negCorrect + 1
-      else
+      if pred[i] == 2 then
         color = {0, 0, 1.0} -- blue - false positive
       end
     end
@@ -125,28 +117,19 @@ function M.calcStats(pathNames, outputs, labels)
       draw.rectangle(processor.currentImage, processor.windowX[i], processor.windowY[i], processor.windowX[i] + processor.windowSizeX - 1, processor.windowY[i] + processor.windowSizeY - 1, 1, color)
     end
   end
-  return {posCorrect, negCorrect, posTotal, negTotal}
+  return {pred, labels}
 end
 
 function M:resetStats()
-  self.stats = {}
-  self.stats.posCorrect = 0
-  self.stats.negCorrect = 0
-  self.stats.posTotal = 0
-  self.stats.negTotal = 0
+  self.stats = optim.ConfusionMatrix({'no person', 'person'})
 end
 
 function M:accStats(new_stats)
-  self.stats.posCorrect = self.stats.posCorrect + new_stats[1]
-  self.stats.negCorrect = self.stats.negCorrect + new_stats[2]
-  self.stats.posTotal = self.stats.posTotal + new_stats[3]
-  self.stats.negTotal = self.stats.negTotal + new_stats[4]
+  self.stats:batchAdd(new_stats[1], new_stats[2])
 end
 
 function M:printStats()
-  print('  Accuracy: ' .. (self.stats.posCorrect + self.stats.negCorrect) .. '/' .. (self.stats.posTotal + self.stats.negTotal) .. ' = ' .. ((self.stats.posCorrect + self.stats.negCorrect)*100.0/(self.stats.posTotal + self.stats.negTotal)) .. '%')
-  print('  Positive Accuracy: ' .. self.stats.posCorrect .. '/' .. self.stats.posTotal .. ' = ' .. (self.stats.posCorrect*100.0/self.stats.posTotal) .. '%')
-  print('  Negative Accuracy: ' .. self.stats.negCorrect .. '/' .. self.stats.negTotal .. ' = ' .. (self.stats.negCorrect*100.0/self.stats.negTotal) .. '%')
+  print(self.stats)
 end
 
 local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scale, start)
@@ -170,7 +153,6 @@ local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scal
     return false
   end
   local finish = min(start + opts.batchSize - 1, nPatches)
-  if finish == nPatches - 1 then finish = nPatches - 2 end
   local count = finish - start + 1
 
   outputPatches:resize(count, c, sz, sz)
@@ -250,6 +232,7 @@ function M.forward(inputs, deterministic)
   if processor.processorOpts.svm ~= '' then
     outputs = findModuleByName(model, processor.processorOpts.layer).output
   end
+  outputs = outputs:view(inputs:size(1), -1)
   return outputs
 end
 
@@ -284,8 +267,11 @@ function M.test(pathNames, inputs)
         aggLoss = aggLoss + loss
         aggTotal = aggTotal + total
         for l=1,#stats do
-          if not(aggStats[l]) then aggStats[l] = 0 end
-          aggStats[l] = aggStats[l] + stats[l]
+          if not(aggStats[l]) then
+            aggStats[l] = stats[l]
+          else
+            aggStats[l] = cat({aggStats[l], stats[l]}, 1)
+          end
         end
         start = start + labels:size(1)
       end

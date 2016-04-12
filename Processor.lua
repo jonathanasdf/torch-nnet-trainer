@@ -100,7 +100,9 @@ function M.getLabels(pathNames)
 end
 
 function M.forward(inputs, deterministic)
-  return model:forward(inputs, deterministic)
+  local outputs = model:forward(inputs, deterministic)
+  outputs = outputs:view(inputs:size(1), -1)
+  return outputs
 end
 
 -- Return gradParams if isReplica, otherwise accumulate gradients in model and return nil

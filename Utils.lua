@@ -43,15 +43,9 @@ function processArgs(cmd)
       print('Not enough threads to use all gpus. Increasing nThreads to ' .. opts.nThreads)
     end
   end
-  if opts.batchSize <= 2 then
-    error('Sorry, this framework only supports batchSize > 3.')
-  end
-  if opts.valBatchSize then
+  if opts.val and opts.val ~= '' then
     if opts.valBatchSize == -1 then
       opts.valBatchSize = opts.batchSize
-    end
-    if opts.valBatchSize <= 2 then
-      error('Sorry, this framework only supports valBatchSize > 3.')
     end
   end
 
@@ -112,6 +106,7 @@ function processArgs(cmd)
         require 'draw'
         require 'fbnn'
         require 'image'
+        require 'optim'
         require 'paths'
 
         require 'Model'
