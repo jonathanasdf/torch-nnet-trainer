@@ -37,6 +37,24 @@ function M:__init()
     self.val[#self.val+1] = self.lookup[line]
   end
 
+  if opts.logdir then
+    self.trainGraph = gnuplot.pngfigure(opts.logdir .. 'train.png')
+    gnuplot.xlabel('epoch')
+    gnuplot.ylabel('acc')
+    gnuplot.grid(true)
+    self.trainTop1 = torch.Tensor(opts.epochs)
+    self.trainTop5 = torch.Tensor(opts.epochs)
+
+    if opts.val then
+      self.valGraph = gnuplot.pngfigure(opts.logdir .. 'val.png')
+      gnuplot.xlabel('epoch')
+      gnuplot.ylabel('acc')
+      gnuplot.grid(true)
+      self.valTop1 = torch.Tensor(opts.epochs)
+      self.valTop5 = torch.Tensor(opts.epochs)
+    end
+  end
+
   self.criterion = nn.TrueNLLCriterion()
   self.criterion.sizeAverage = false
   if nGPU > 0 then
@@ -125,9 +143,29 @@ function M:accStats(new_stats)
   self.stats.total = self.stats.total + new_stats[3]
 end
 
-function M:printStats()
-  print('  Top 1 accuracy: ' .. self.stats.top1 .. '/' .. self.stats.total .. ' = ' .. (self.stats.top1*100.0/self.stats.total) .. '%')
-  print('  Top 5 accuracy: ' .. self.stats.top5 .. '/' .. self.stats.total .. ' = ' .. (self.stats.top5*100.0/self.stats.total) .. '%')
+function M:processStats(phase)
+  local output = ''
+  output = output .. '  Top 1 accuracy: ' .. self.stats.top1 .. '/' .. self.stats.total .. ' = ' .. (self.stats.top1*100.0/self.stats.total) .. '%'
+  output = output .. '  Top 5 accuracy: ' .. self.stats.top5 .. '/' .. self.stats.total .. ' = ' .. (self.stats.top5*100.0/self.stats.total) .. '%'
+
+  if phase == 'train' and self.trainGraph then
+    self.trainTop1[opts.epoch] = self.stats.top1/self.stats.total
+    self.trainTop5[opts.epoch] = self.stats.top5/self.stats.total
+
+    local x = torch.range(1, opts.epoch):long()
+    gnuplot.figure(self.trainGraph)
+    gnuplot.plot({'top1', x, self.trainTop1:index(1, x), '+-'}, {'top5', x, self.trainTop5:index(1, x), '+-'})
+    gnuplot.plotflush()
+  elseif phase == 'val' and self.valGraph and opts.epoch >= opts.valEvery then
+    self.valTop1[opts.epoch] = self.stats.top1/self.stats.total
+    self.valTop5[opts.epoch] = self.stats.top5/self.stats.total
+
+    local x = torch.range(opts.valEvery, opts.epoch, opts.valEvery):long()
+    gnuplot.figure(self.valGraph)
+    gnuplot.plot({'top1', x, self.trainTop1:index(1, x), '+-'}, {'top5', x, self.trainTop5:index(1, x), '+-'})
+    gnuplot.plotflush()
+  end
+  return output
 end
 
 return M

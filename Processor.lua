@@ -135,11 +135,12 @@ function M.train(pathNames, inputs)
   mutex:lock()
   local outputs = processor.forward(inputs)
   --Assumes criterion.sizeAverage = false
-  processor.criterion:forward(outputs, labels)
+  local loss = processor.criterion:forward(outputs, labels)
+  local stats = processor.calcStats(pathNames, outputs, labels)
   local gradOutputs = processor.criterion:backward(outputs, labels)
   local gradParams = processor.backward(inputs, gradOutputs)
   mutex:unlock()
-  return gradParams
+  return gradParams, loss, labels:size(1), stats
 end
 
 function M:updateModel()
@@ -164,8 +165,8 @@ function M.calcStats(pathNames, outputs, labels) end
 function M:resetStats() end
 -- Accumulate stats from the result of calcStats
 function M:accStats(new_stats) end
--- Called after each validation/test run
-function M:printStats() end
+-- Called after each epoch
+function M:processStats(phase) end
 
 -- return {aggregatedLoss, #instancesTested, stats}
 function M.testWithLabels(pathNames, inputs, labels)

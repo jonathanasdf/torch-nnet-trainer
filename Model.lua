@@ -1,6 +1,7 @@
 require 'cudnn'
 require 'cunn'
 require 'dpnn'
+require 'gnuplot'
 require 'paths'
 
 require 'DataLoader'
@@ -68,21 +69,23 @@ function M:forward(inputs, deterministic)
   return self.model:forward(inputs)
 end
 
-local function updateModel(model, gradParams)
-    opts.trainIter = opts.trainIter + 1
-    if gradParams then
-      model.gradParams:add(gradParams)
-    end
-    if opts.trainIter % opts.updateEvery == 0 then
-      opts.processor:updateModel()
-    end
-    jobDone()
+local function updateModel(model, gradParams, loss, cnt, stats)
+  opts.processor:accStats(stats)
+  model.loss = model.loss + loss
+  model.count = model.count + cnt
+  if gradParams then
+    model.gradParams:add(gradParams)
+  end
+  if opts.epoch % opts.updateEvery == 0 then
+    opts.processor:updateModel()
+  end
+  jobDone()
 end
 
 local function accValResults(model, loss, cnt, stats)
   opts.processor:accStats(stats)
-  model.validLoss = model.validLoss + loss
-  model.validCount = model.validCount + cnt
+  model.loss = model.loss + loss
+  model.count = model.count + cnt
   jobDone()
 end
 
@@ -126,20 +129,32 @@ function M:train(trainFn, valFn)
   end)
 
   self:zeroGradParameters()
-  opts.trainIter = 0
+  self.trainLoss = torch.Tensor(opts.epochs)
+  self.valLoss = torch.Tensor(opts.epochs)
   for epoch=1,opts.epochs do
+    opts.epoch = epoch
+    augmentThreadState(function()
+      opts.epoch = epoch
+    end)
     print('==> training epoch # ' .. epoch)
 
+    self.loss = 0
+    self.count = 0
+    opts.processor:resetStats()
     trainLoader:runAsync(opts.batchSize,
                          opts.epochSize,
                          true, --randomSample
                          bindPost(opts.processor.preprocessFn, true),
                          trainFn,
                          bind(updateModel, self))
+    self.loss = self.loss / self.count
+    self.trainLoss[epoch] = self.loss
+    print(string.format('  Training loss: %.6f', self.loss))
+    printlog(opts.processor:processStats('train'))
 
     if opts.val ~= '' and epoch % opts.valEvery == 0 then
-      self.validLoss = 0
-      self.validCount = 0
+      self.loss = 0
+      self.count = 0
       opts.processor:resetStats()
       validLoader:runAsync(opts.valBatchSize,
                            opts.valSize,
@@ -147,9 +162,26 @@ function M:train(trainFn, valFn)
                            bindPost(opts.processor.preprocessFn, false),
                            valFn,
                            bind(accValResults, self))
-      self.validLoss = self.validLoss / self.validCount
-      print(string.format('  Validation loss: %.6f', self.validLoss))
-      opts.processor:printStats()
+      self.loss = self.loss / self.count
+      self.valLoss[epoch] = self.loss
+      print(string.format('  Validation loss: %.6f', self.loss))
+      print(opts.processor:processStats('val'))
+      print()
+    end
+
+    if opts.logdir then
+      gnuplot.figure(opts.lossGraph)
+      local valX
+      if opts.val ~= '' and epoch >= opts.valEvery then
+         valX = torch.range(opts.valEvery, epoch, opts.valEvery):long()
+      end
+      local trainX = torch.range(1, epoch):long()
+      if valX then
+        gnuplot.plot({'train', trainX, self.trainLoss:index(1, trainX), '+-'}, {'val', valX, self.valLoss:index(1, valX), '+-'})
+      else
+        gnuplot.plot({'train', trainX, self.trainLoss:index(1, trainX), '+-'})
+      end
+      gnuplot.plotflush()
     end
 
     if opts.cacheEvery ~= -1 and epoch % opts.cacheEvery == 0 and

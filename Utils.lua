@@ -77,6 +77,11 @@ function processArgs(cmd)
     paths.mkdir(opts.logdir)
     cmd:log(opts.logdir .. 'log.txt', opts)
     cmd:addTime()
+
+    opts.lossGraph = gnuplot.pngfigure(opts.logdir .. 'loss.png')
+    gnuplot.xlabel('epoch')
+    gnuplot.ylabel('loss')
+    gnuplot.grid(true)
   end
 
   if opts.processor == '' then
@@ -105,6 +110,7 @@ function processArgs(cmd)
         require 'dpnn'
         require 'draw'
         require 'fbnn'
+        require 'gnuplot'
         require 'image'
         require 'optim'
         require 'paths'

@@ -45,6 +45,26 @@ function M:__init()
     matio.load('/file/caltech/test/box.mat', 'box')
   }
 
+  if opts.logdir then
+    self.trainGraph = gnuplot.pngfigure(opts.logdir .. 'train.png')
+    gnuplot.xlabel('epoch')
+    gnuplot.ylabel('acc')
+    gnuplot.grid(true)
+    self.trainPosAcc = torch.Tensor(opts.epochs)
+    self.trainNegAcc = torch.Tensor(opts.epochs)
+    self.trainAcc = torch.Tensor(opts.epochs)
+
+    if opts.val then
+      self.valGraph = gnuplot.pngfigure(opts.logdir .. 'val.png')
+      gnuplot.xlabel('epoch')
+      gnuplot.ylabel('acc')
+      gnuplot.grid(true)
+      self.valPosAcc = torch.Tensor(opts.epochs)
+      self.valNegAcc = torch.Tensor(opts.epochs)
+      self.valAcc = torch.Tensor(opts.epochs)
+    end
+  end
+
   local w = self.processorOpts.negativesWeight
   local weights = torch.Tensor{w/(1+w), 1/(1+w)} * 2
   self.criterion = nn.TrueNLLCriterion(weights)
@@ -128,8 +148,28 @@ function M:accStats(new_stats)
   self.stats:batchAdd(new_stats[1], new_stats[2])
 end
 
-function M:printStats()
-  print(self.stats)
+function M:processStats(phase)
+  self.stats:updateValids()
+  if phase == 'train' and self.trainGraph then
+    self.trainPosAcc[opts.epoch] = self.stats.valids[1]
+    self.trainNegAcc[opts.epoch] = self.stats.valids[2]
+    self.trainAcc[opts.epoch] = self.stats.averageValid
+
+    local x = torch.range(1, opts.epoch):long()
+    gnuplot.figure(self.trainGraph)
+    gnuplot.plot({'pos', x, self.trainPosAcc:index(1, x), '+-'}, {'neg', x, self.trainNegAcc:index(1, x), '+-'}, {'overall', x, self.trainAcc:index(1, x), '-'})
+    gnuplot.plotflush()
+  elseif phase == 'val' and self.valGraph and opts.epoch >= opts.valEvery then
+    self.valPosAcc[opts.epoch] = self.stats.valids[1]
+    self.valNegAcc[opts.epoch] = self.stats.valids[2]
+    self.valAcc[opts.epoch] = self.stats.averageValid
+
+    local x = torch.range(opts.valEvery, opts.epoch, opts.valEvery):long()
+    gnuplot.figure(self.valGraph)
+    gnuplot.plot({'pos', x, self.valPosAcc:index(1, x), '+-'}, {'neg', x, self.valNegAcc:index(1, x), '+-'}, {'overall', x, self.valAcc:index(1, x), '-'})
+    gnuplot.plotflush()
+  end
+  return tostring(self.stats)
 end
 
 local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scale, start)
@@ -255,7 +295,9 @@ function M.test(pathNames, inputs)
   local nInputs = #pathNames
   for i=1,nInputs do
     local path = pathNames[i]
-    processor.currentImage = image.load(path, 3)
+    if outdir then
+      processor.currentImage = image.load(path, 3)
+    end
     local bboxes = processor.bboxes[path:find('val') and 1 or 2]
     local index = tonumber(paths.basename(path, 'png'))
     local scale = 1
