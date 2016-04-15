@@ -50,3 +50,4 @@ DataLoader{inputs = opts.input}:runAsync(
 
 local svmmodel = liblinear.train(data, '-s 2 -B 1')
 torch.save(opts.output, svmmodel)
+print("Done!\n")

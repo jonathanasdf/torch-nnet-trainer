@@ -19,8 +19,8 @@ local function sm(input)
 end
 
 function SoftCrossEntropyCriterion:updateOutput(input, target)
-  input = input:squeeze() / self.temperature
-  target = (type(target) == 'number' and target or target:squeeze()) / self.temperature
+  input = input / self.temperature
+  target = target / self.temperature
 
   if input:dim() == 1 then
     self.output = -torch.dot(sm(target), input - math.log(torch.exp(input):sum()))
@@ -42,8 +42,8 @@ end
 function SoftCrossEntropyCriterion:updateGradInput(input, target)
   self.gradInput:resizeAs(input)
 
-  input = input:squeeze() / self.temperature
-  target = type(target) == 'number' and target or target:squeeze() / self.temperature
+  input = input / self.temperature
+  target = target / self.temperature
 
   local y = sm(target)
   if input:dim() == 1 then

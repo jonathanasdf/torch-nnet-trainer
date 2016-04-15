@@ -43,15 +43,9 @@ function processArgs(cmd)
       print('Not enough threads to use all gpus. Increasing nThreads to ' .. opts.nThreads)
     end
   end
-  if opts.batchSize <= 2 then
-    error('Sorry, this framework only supports batchSize > 3.')
-  end
-  if opts.valBatchSize then
+  if opts.val and opts.val ~= '' then
     if opts.valBatchSize == -1 then
       opts.valBatchSize = opts.batchSize
-    end
-    if opts.valBatchSize <= 2 then
-      error('Sorry, this framework only supports valBatchSize > 3.')
     end
   end
 
@@ -83,6 +77,11 @@ function processArgs(cmd)
     paths.mkdir(opts.logdir)
     cmd:log(opts.logdir .. 'log.txt', opts)
     cmd:addTime()
+
+    opts.lossGraph = gnuplot.pngfigure(opts.logdir .. 'loss.png')
+    gnuplot.xlabel('epoch')
+    gnuplot.ylabel('loss')
+    gnuplot.grid(true)
   end
 
   if opts.processor == '' then
@@ -111,7 +110,9 @@ function processArgs(cmd)
         require 'dpnn'
         require 'draw'
         require 'fbnn'
+        require 'gnuplot'
         require 'image'
+        require 'optim'
         require 'paths'
 
         require 'Model'

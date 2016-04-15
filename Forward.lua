@@ -47,4 +47,5 @@ loader:runAsync(
   opts.processor.test,
   accResults,
   state.completed + 1) -- startBatch
-opts.processor:printStats()
+print(opts.processor:processStats())
+print()

@@ -19,4 +19,4 @@ local model = Model(opts.model)
 opts.processor.model = model
 opts.processor:initializeThreads()
 model:train()
-print("Done!")
+print("Done!\n")

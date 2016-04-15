@@ -100,15 +100,29 @@ function M.getLabels(pathNames)
 end
 
 function M.forward(inputs, deterministic)
-  return model:forward(inputs, deterministic)
+  local outputs = model:forward(inputs, deterministic)
+  outputs = outputs:view(inputs:size(1), -1)
+  return outputs
 end
 
 -- Return gradParams if isReplica, otherwise accumulate gradients in model and return nil
-function M.backward(inputs, gradOutputs)
-  local gradParams
+function M.backward(inputs, gradOutputs, gradLayer)
   if isReplica then
     model:zeroGradParameters()
+  end
+
+  if gradLayer then
+    -- feed gradients through a specific layer
+    for i=gradLayer,2,-1 do
+      gradOutputs = model.model:get(i):backward(model.model:get(i-1).output, gradOutputs)
+    end
+    model.model:get(1):backward(inputs, gradOutputs)
+  else
     model:backward(inputs, gradOutputs)
+  end
+
+  local gradParams
+  if isReplica then
     if nGPU > 0 and model.gradParams:getDevice() ~= 1 then
       cutorch.setDevice(1)
       gradParams = model.gradParams:clone()
@@ -116,8 +130,6 @@ function M.backward(inputs, gradOutputs)
     else
       gradParams = model.gradParams:clone()
     end
-  else
-    model:backward(inputs, gradOutputs)
   end
   return gradParams
 end
@@ -133,11 +145,12 @@ function M.train(pathNames, inputs)
   mutex:lock()
   local outputs = processor.forward(inputs)
   --Assumes criterion.sizeAverage = false
-  processor.criterion:forward(outputs, labels)
+  local loss = processor.criterion:forward(outputs, labels)
+  local stats = processor.calcStats(pathNames, outputs, labels)
   local gradOutputs = processor.criterion:backward(outputs, labels)
   local gradParams = processor.backward(inputs, gradOutputs)
   mutex:unlock()
-  return gradParams
+  return gradParams, loss, labels:size(1), stats
 end
 
 function M:updateModel()
@@ -162,8 +175,8 @@ function M.calcStats(pathNames, outputs, labels) end
 function M:resetStats() end
 -- Accumulate stats from the result of calcStats
 function M:accStats(new_stats) end
--- Called after each validation/test run
-function M:printStats() end
+-- Called after each epoch
+function M:processStats(phase) end
 
 -- return {aggregatedLoss, #instancesTested, stats}
 function M.testWithLabels(pathNames, inputs, labels)

@@ -4,6 +4,7 @@ require 'cv.imgcodecs'
 require 'draw'
 require 'fbnn'
 matio = require 'matio'
+require 'optim'
 require 'svm'
 
 local Processor = require 'Processor'
@@ -43,6 +44,26 @@ function M:__init()
     matio.load('/file/caltech/val/box.mat', 'box'),
     matio.load('/file/caltech/test/box.mat', 'box')
   }
+
+  if opts.logdir then
+    self.trainGraph = gnuplot.pngfigure(opts.logdir .. 'train.png')
+    gnuplot.xlabel('epoch')
+    gnuplot.ylabel('acc')
+    gnuplot.grid(true)
+    self.trainPosAcc = torch.Tensor(opts.epochs)
+    self.trainNegAcc = torch.Tensor(opts.epochs)
+    self.trainAcc = torch.Tensor(opts.epochs)
+
+    if opts.val then
+      self.valGraph = gnuplot.pngfigure(opts.logdir .. 'val.png')
+      gnuplot.xlabel('epoch')
+      gnuplot.ylabel('acc')
+      gnuplot.grid(true)
+      self.valPosAcc = torch.Tensor(opts.epochs)
+      self.valNegAcc = torch.Tensor(opts.epochs)
+      self.valAcc = torch.Tensor(opts.epochs)
+    end
+  end
 
   local w = self.processorOpts.negativesWeight
   local weights = torch.Tensor{w/(1+w), 1/(1+w)} * 2
@@ -90,7 +111,6 @@ function M.calcStats(pathNames, outputs, labels)
   local pred
   if processor.processorOpts.svm == '' then
     _, pred = torch.max(outputs, 2)
-    pred = pred:squeeze()
   else
     if not(processor.processorOpts.svmmodel) then
       processor.processorOpts.svmmodel = torch.load(processor.processorOpts.svm)
@@ -98,26 +118,18 @@ function M.calcStats(pathNames, outputs, labels)
     local data = convertTensorToSVMLight(labels, outputs)
     pred = liblinear.predict(data, processor.processorOpts.svmmodel, '-q')
   end
+  pred = pred:view(-1)
 
-  local posCorrect = 0
-  local negCorrect = 0
-  local posTotal = 0
-  local negTotal = 0
   for i=1,labels:size(1) do
     local color
     if labels[i] == 2 then
-      posTotal = posTotal + 1
       if pred[i] == 2 then
-        posCorrect = posCorrect + 1
         color = {0, 1.0, 0} -- green - true positive
       else
         color = {1.0, 0, 0} -- red - false negative
       end
     else
-      negTotal = negTotal + 1
-      if pred[i] == 1 then
-        negCorrect = negCorrect + 1
-      else
+      if pred[i] == 2 then
         color = {0, 0, 1.0} -- blue - false positive
       end
     end
@@ -125,28 +137,39 @@ function M.calcStats(pathNames, outputs, labels)
       draw.rectangle(processor.currentImage, processor.windowX[i], processor.windowY[i], processor.windowX[i] + processor.windowSizeX - 1, processor.windowY[i] + processor.windowSizeY - 1, 1, color)
     end
   end
-  return {posCorrect, negCorrect, posTotal, negTotal}
+  return {pred, labels}
 end
 
 function M:resetStats()
-  self.stats = {}
-  self.stats.posCorrect = 0
-  self.stats.negCorrect = 0
-  self.stats.posTotal = 0
-  self.stats.negTotal = 0
+  self.stats = optim.ConfusionMatrix({'no person', 'person'})
 end
 
 function M:accStats(new_stats)
-  self.stats.posCorrect = self.stats.posCorrect + new_stats[1]
-  self.stats.negCorrect = self.stats.negCorrect + new_stats[2]
-  self.stats.posTotal = self.stats.posTotal + new_stats[3]
-  self.stats.negTotal = self.stats.negTotal + new_stats[4]
+  self.stats:batchAdd(new_stats[1], new_stats[2])
 end
 
-function M:printStats()
-  print('  Accuracy: ' .. (self.stats.posCorrect + self.stats.negCorrect) .. '/' .. (self.stats.posTotal + self.stats.negTotal) .. ' = ' .. ((self.stats.posCorrect + self.stats.negCorrect)*100.0/(self.stats.posTotal + self.stats.negTotal)) .. '%')
-  print('  Positive Accuracy: ' .. self.stats.posCorrect .. '/' .. self.stats.posTotal .. ' = ' .. (self.stats.posCorrect*100.0/self.stats.posTotal) .. '%')
-  print('  Negative Accuracy: ' .. self.stats.negCorrect .. '/' .. self.stats.negTotal .. ' = ' .. (self.stats.negCorrect*100.0/self.stats.negTotal) .. '%')
+function M:processStats(phase)
+  self.stats:updateValids()
+  if phase == 'train' and self.trainGraph then
+    self.trainPosAcc[opts.epoch] = self.stats.valids[1]
+    self.trainNegAcc[opts.epoch] = self.stats.valids[2]
+    self.trainAcc[opts.epoch] = self.stats.averageValid
+
+    local x = torch.range(1, opts.epoch):long()
+    gnuplot.figure(self.trainGraph)
+    gnuplot.plot({'pos', x, self.trainPosAcc:index(1, x), '+-'}, {'neg', x, self.trainNegAcc:index(1, x), '+-'}, {'overall', x, self.trainAcc:index(1, x), '-'})
+    gnuplot.plotflush()
+  elseif phase == 'val' and self.valGraph and opts.epoch >= opts.valEvery then
+    self.valPosAcc[opts.epoch] = self.stats.valids[1]
+    self.valNegAcc[opts.epoch] = self.stats.valids[2]
+    self.valAcc[opts.epoch] = self.stats.averageValid
+
+    local x = torch.range(opts.valEvery, opts.epoch, opts.valEvery):long()
+    gnuplot.figure(self.valGraph)
+    gnuplot.plot({'pos', x, self.valPosAcc:index(1, x), '+-'}, {'neg', x, self.valNegAcc:index(1, x), '+-'}, {'overall', x, self.valAcc:index(1, x), '-'})
+    gnuplot.plotflush()
+  end
+  return tostring(self.stats)
 end
 
 local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scale, start)
@@ -170,7 +193,6 @@ local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scal
     return false
   end
   local finish = min(start + opts.batchSize - 1, nPatches)
-  if finish == nPatches - 1 then finish = nPatches - 2 end
   local count = finish - start + 1
 
   outputPatches:resize(count, c, sz, sz)
@@ -250,6 +272,7 @@ function M.forward(inputs, deterministic)
   if processor.processorOpts.svm ~= '' then
     outputs = findModuleByName(model, processor.processorOpts.layer).output
   end
+  outputs = outputs:view(inputs:size(1), -1)
   return outputs
 end
 
@@ -272,7 +295,9 @@ function M.test(pathNames, inputs)
   local nInputs = #pathNames
   for i=1,nInputs do
     local path = pathNames[i]
-    processor.currentImage = image.load(path, 3)
+    if outdir then
+      processor.currentImage = image.load(path, 3)
+    end
     local bboxes = processor.bboxes[path:find('val') and 1 or 2]
     local index = tonumber(paths.basename(path, 'png'))
     local scale = 1
@@ -284,8 +309,11 @@ function M.test(pathNames, inputs)
         aggLoss = aggLoss + loss
         aggTotal = aggTotal + total
         for l=1,#stats do
-          if not(aggStats[l]) then aggStats[l] = 0 end
-          aggStats[l] = aggStats[l] + stats[l]
+          if not(aggStats[l]) then
+            aggStats[l] = stats[l]
+          else
+            aggStats[l] = cat({aggStats[l], stats[l]}, 1)
+          end
         end
         start = start + labels:size(1)
       end
