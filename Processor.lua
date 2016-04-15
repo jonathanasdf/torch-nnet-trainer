@@ -106,11 +106,23 @@ function M.forward(inputs, deterministic)
 end
 
 -- Return gradParams if isReplica, otherwise accumulate gradients in model and return nil
-function M.backward(inputs, gradOutputs)
-  local gradParams
+function M.backward(inputs, gradOutputs, gradLayer)
   if isReplica then
     model:zeroGradParameters()
+  end
+
+  if gradLayer then
+    -- feed gradients through a specific layer
+    for i=gradLayer,2,-1 do
+      gradOutputs = model.model:get(i):backward(model.model:get(i-1).output, gradOutputs)
+    end
+    model.model:get(1):backward(inputs, gradOutputs)
+  else
     model:backward(inputs, gradOutputs)
+  end
+
+  local gradParams
+  if isReplica then
     if nGPU > 0 and model.gradParams:getDevice() ~= 1 then
       cutorch.setDevice(1)
       gradParams = model.gradParams:clone()
@@ -118,8 +130,6 @@ function M.backward(inputs, gradOutputs)
     else
       gradParams = model.gradParams:clone()
     end
-  else
-    model:backward(inputs, gradOutputs)
   end
   return gradParams
 end

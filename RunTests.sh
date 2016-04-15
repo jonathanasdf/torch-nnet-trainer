@@ -1,5 +1,5 @@
 #!/bin/sh -ex
-export CUDA_VISIBLE_DEVICES=2,1
+export CUDA_VISIBLE_DEVICES=1,0
 # Imagenet train, TrainStudentModel, forward with nThreads 0
 th /home/jshen/scripts/Train.lua /home/jshen/models/VGG/vggbn.lua /file/imagenet/ILSVRC2012_img_val /tmp/test.t7 /home/jshen/scripts/ImagenetProcessor.lua -val /file/imagenet/ILSVRC2012_img_val -valSize 2 -valEvery 1 -epochs 1 -epochSize 1 -nThreads 0 -nGPU 1
 th /home/jshen/scripts/TrainStudentModel.lua /home/jshen/models/VGG/VGG_ILSVRC_16_layers.caffemodel /tmp/test.t7 /file/imagenet/ILSVRC2012_img_val /tmp/test.t7 /home/jshen/scripts/ImagenetProcessor.lua -epochs 1 -epochSize 1 -nThreads 0 -nGPU 1

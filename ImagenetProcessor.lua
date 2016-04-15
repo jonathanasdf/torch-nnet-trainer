@@ -145,7 +145,7 @@ end
 
 function M:processStats(phase)
   local output = ''
-  output = output .. '  Top 1 accuracy: ' .. self.stats.top1 .. '/' .. self.stats.total .. ' = ' .. (self.stats.top1*100.0/self.stats.total) .. '%'
+  output = output .. '  Top 1 accuracy: ' .. self.stats.top1 .. '/' .. self.stats.total .. ' = ' .. (self.stats.top1*100.0/self.stats.total) .. '%\n'
   output = output .. '  Top 5 accuracy: ' .. self.stats.top5 .. '/' .. self.stats.total .. ' = ' .. (self.stats.top5*100.0/self.stats.total) .. '%'
 
   if phase == 'train' and self.trainGraph then

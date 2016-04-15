@@ -18,7 +18,7 @@ defineBaseOptions(cmd)     --defined in utils.lua
 defineTrainingOptions(cmd) --defined in train.lua
 cmd:option('-teacherProcessor', '', 'alternate processor for teacher model')
 cmd:option('-teacherProcessorOpts', '', 'alternate processor options for teacher model')
-cmd:option('-hintLayer', '', 'which hint layer to use. Defaults to last non-softmax layer')
+cmd:option('-matchLayer', 2, 'which layers to match outputs, counting from the end. Defaults to second last layer.')
 cmd:option('-T', 2, 'temperature')
 cmd:option('-lambda', 0.5, 'hard target relative weight')
 processArgs(cmd)
@@ -26,20 +26,12 @@ processArgs(cmd)
 assert(paths.filep(opts.teacher), 'Cannot find teacher model ' .. opts.teacher)
 assert(paths.filep(opts.student), 'Cannot find student model ' .. opts.student)
 
-local student = Model(opts.student)
-local hasSoftmax = false
-if #student:findModules('cudnn.SoftMax') ~= 0 or
-   #student:findModules('nn.SoftMax') ~= 0 then
-  hasSoftmax = true
+local criterion = SoftCrossEntropyCriterion(opts.T)
+if nGPU > 0 then
+  criterion = criterion:cuda()
 end
-opts.processor.model = student
-opts.processor:initializeThreads()
 
 local localTeacher = Model(opts.teacher)
-if #localTeacher:findModules('cudnn.SoftMax') ~= 0 or
-   #localTeacher:findModules('nn.SoftMax') ~= 0 then
-  localTeacher.model:remove()
-end
 local localTeacherProcessor
 if opts.teacherProcessor ~= '' then
   if opts.teacherProcessorOpts ~= '' then
@@ -48,10 +40,19 @@ if opts.teacherProcessor ~= '' then
   localTeacherProcessor = requirePath(opts.teacherProcessor).new()
 end
 
-local criterion = SoftCrossEntropyCriterion(opts.T)
-if nGPU > 0 then
-  criterion = criterion:cuda()
+local student = Model(opts.student)
+opts.processor.model = student
+
+opts.processor.studentLayer = #student.model.modules - opts.matchLayer + 1
+for i=opts.processor.studentLayer+1,#student.model.modules do
+  student.model:remove()
 end
+opts.processor.teacherLayer = #localTeacher.model.modules - opts.matchLayer + 1
+for i=opts.processor.teacherLayer+1,#localTeacher.model.modules do
+  student.model:add(localTeacher.model:get(i):clone())
+end
+
+opts.processor:initializeThreads()
 
 
 if nThreads == 0 then
@@ -106,37 +107,32 @@ local function train(pathNames, studentInputs)
   end
 
   teacherMutex:lock()
-  local logits = teacher:forward(teacherInputs, true)
-  if opts.hintLayer ~= '' then
-    logits = findModuleByName(teacher, opts.hintLayer).output:clone()
-  end
+  teacher:forward(teacherInputs, true)
+  local teacherLayerOutputs = teacher.model:get(processor.teacherLayer).output:clone()
   teacherMutex:unlock()
 
   mutex:lock()
-
   local studentOutputs = model:forward(studentInputs)
-  local studentLogits = studentOutputs
-  if hasSoftmax then
-    studentLogits = model.model.modules[#model.model.modules-1].output
-  end
+  local studentLayerOutputs = model.model:get(processor.studentLayer).output
 
-  softCriterion:forward(studentLogits, logits)
-  local softGradOutputs = softCriterion:backward(studentLogits, logits)*opts.T*opts.T
-
-  if hasSoftmax then
-    -- Assumes that model structure is Sequential(Sequential(everything_else)):add(SoftMax())
-    model.model.modules[#model.model.modules-1]:backward(studentInputs, softGradOutputs)
-  else
-    model:backward(studentInputs, softGradOutputs)
-  end
+  local softLoss = softCriterion:forward(studentLayerOutputs, teacherLayerOutputs)
+  local softGradOutputs = softCriterion:backward(studentLayerOutputs, teacherLayerOutputs)*opts.T*opts.T
+  local softGradParams = processor.backward(studentInputs, softGradOutputs, processor.studentLayer)
 
   -- Hard labels
-  processor.criterion:forward(studentOutputs, labels)
+  local hardLoss = processor.criterion:forward(studentOutputs, labels)*opts.lambda
+  local stats = processor.calcStats(pathNames, studentOutputs, labels)
   local hardGradOutputs = processor.criterion:backward(studentOutputs, labels)*opts.lambda
-  model:backward(studentInputs, hardGradOutputs)
+  local hardGradParams = processor.backward(studentInputs, hardGradOutputs)
 
+  local gradParams
+  if softGradParams then
+    gradParams = softGradParams + hardGradParams
+  end
   mutex:unlock()
+
+  return gradParams, softLoss + hardLoss, labels:size(1), stats
 end
 
 student:train(train)
-print("Done!")
+print("Done!\n")

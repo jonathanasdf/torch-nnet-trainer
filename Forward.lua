@@ -48,3 +48,4 @@ loader:runAsync(
   accResults,
   state.completed + 1) -- startBatch
 print(opts.processor:processStats())
+print()
