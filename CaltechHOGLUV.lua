@@ -1,3 +1,4 @@
+local Transforms = require 'Transforms'
 local CaltechProcessor = require 'CaltechProcessor'
 local M = torch.class('CaltechHogLuvProcessor', 'CaltechProcessor')
 
@@ -8,12 +9,15 @@ end
 function M.preprocess(path, isTraining, processorOpts)
   local dir, name = path:match("(.*)base(.*)")
   local imgs = {}
-  for i=1,10 do
-    imgs[i] = image.load(dir .. tostring(i) .. name, 1)
+  for i=11,20 do
+    imgs[i-10] = image.load(dir .. tostring(i) .. name, 1)
   end
   imgs = cat(imgs, 1)
-  if isTraining and (imgs:size(2) ~= processorOpts.imageSize or imgs:size(3) ~= processorOpts.imageSize) then
-    imgs = image.scale(imgs, processorOpts.imageSize, processorOpts.imageSize)
+  if isTraining then
+    if imgs:size(2) ~= processorOpts.imageSize or imgs:size(3) ~= processorOpts.imageSize then
+      imgs = image.scale(imgs, processorOpts.imageSize, processorOpts.imageSize)
+    end
+    imgs = Transforms.HorizontalFlip(processorOpts.flip)(imgs)
   end
   assert(imgs:size(1) == 10)
   return imgs

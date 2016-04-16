@@ -1,12 +1,10 @@
-cv = require 'cv'
-require 'cv.cudawarping'
-require 'cv.imgcodecs'
 require 'draw'
 require 'fbnn'
 matio = require 'matio'
 require 'optim'
 require 'svm'
 
+local Transforms = require 'Transforms'
 local Processor = require 'Processor'
 local M = torch.class('CaltechProcessor', 'Processor')
 
@@ -18,12 +16,14 @@ local function defineSlidingWindowOptions(cmd)
   cmd:option('-windowScales', 2, 'how many times to downscale window (0 = no downscaling)')
   cmd:option('-windowDownscaling', 0.75, 'what percent to downscale window')
   cmd:option('-windowIOU', 0.5, 'what IOU to count as a positive example')
+  cmd:option('-posMinBoxSize', 225, 'minimum ground truth box size to be counted as a positive example')
 end
 
 function M:__init()
   self.cmd:option('-imageSize', 113, 'What to resize to.')
   self.cmd:option('-inceptionPreprocessing', false, 'Preprocess for inception models (RGB, [-1, 1))')
   self.cmd:option('-caffePreprocessing', false, 'Preprocess for caffe models (BGR, [0, 255])')
+  self.cmd:option('-flip', 0.5, 'Probability to do horizontal flip (for training)')
   self.cmd:option('-negativesWeight', 1, 'Relative weight of negative examples')
   self.cmd:option('-svm', '', 'SVM to use')
   self.cmd:option('-layer', 'fc7', 'layer to use as SVM input')
@@ -45,7 +45,7 @@ function M:__init()
     matio.load('/file/caltech/test/box.mat', 'box')
   }
 
-  if opts.logdir then
+  if opts.logdir and opts.epochs then
     self.trainGraph = gnuplot.pngfigure(opts.logdir .. 'train.png')
     gnuplot.xlabel('epoch')
     gnuplot.ylabel('acc')
@@ -84,8 +84,12 @@ end
 
 function M.preprocess(path, isTraining, processorOpts)
   local img = image.load(path, 3)
-  if isTraining and (img:size(2) ~= processorOpts.imageSize or img:size(3) ~= processorOpts.imageSize) then
-    img = image.scale(img, processorOpts.imageSize, processorOpts.imageSize)
+  if isTraining then
+    if img:size(2) ~= processorOpts.imageSize or img:size(3) ~= processorOpts.imageSize then
+      img = image.scale(img, processorOpts.imageSize, processorOpts.imageSize)
+    end
+    img = Transforms.HorizontalFlip(processorOpts.flip)(img)
+    img = Transforms.ColorJitter{brightness = 0.4, contrast = 0.4, saturation = 0.4}(img)
   end
 
   if processorOpts.inceptionPreprocessing then
@@ -235,24 +239,26 @@ local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scal
       local YB2 = bboxes[i][2]+bboxes[i][4]
       local SB = bboxes[i][3]*bboxes[i][4]
 
-      local left = max(0, ceil((XB1-sizex)/sx))
-      local right = floor(XB2/sx)
-      local top = max(0, ceil((YB1-sizey)/sy))
-      local bottom = floor(YB2/sy)
-      for j=top,bottom do
-        for k=left,right do
-          id = j*nCols+k+1
-          if id >= start and id <= finish then
-            local XA1 = k*sx
-            local XA2 = k*sx+sizex
-            local YA1 = j*sy
-            local YA2 = j*sy+sizey
+      if SB >= processor.processorOpts.posMinBoxSize then
+        local left = max(0, ceil((XB1-sizex)/sx))
+        local right = floor(XB2/sx)
+        local top = max(0, ceil((YB1-sizey)/sy))
+        local bottom = floor(YB2/sy)
+        for j=top,bottom do
+          for k=left,right do
+            id = j*nCols+k+1
+            if id >= start and id <= finish then
+              local XA1 = k*sx
+              local XA2 = k*sx+sizex
+              local YA1 = j*sy
+              local YA2 = j*sy+sizey
 
-            local SI = max(0, min(XA2, XB2) - max(XA1, XB1)) *
-                       max(0, min(YA2, YB2) - max(YA1, YB1))
-            local SU = SA + SB - SI
-            if SI/SU > processor.processorOpts.windowIOU then
-              outputLabels[id-start+1] = 2
+              local SI = max(0, min(XA2, XB2) - max(XA1, XB1)) *
+                         max(0, min(YA2, YB2) - max(YA1, YB1))
+              local SU = SA + SB - SI
+              if SI/SU > processor.processorOpts.windowIOU then
+                outputLabels[id-start+1] = 2
+              end
             end
           end
         end
@@ -263,12 +269,7 @@ local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scal
 end
 
 function M.forward(inputs, deterministic)
-  local outputs
-  if not(deterministic) then
-    outputs = model:forward(inputs)
-  else
-    outputs = model:forward(inputs, true)
-  end
+  local outputs = model:forward(inputs, deterministic)
   if processor.processorOpts.svm ~= '' then
     outputs = findModuleByName(model, processor.processorOpts.layer).output
   end
@@ -310,7 +311,7 @@ function M.test(pathNames, inputs)
         aggTotal = aggTotal + total
         for l=1,#stats do
           if not(aggStats[l]) then
-            aggStats[l] = stats[l]
+            aggStats[l] = stats[l]:clone()
           else
             aggStats[l] = cat({aggStats[l], stats[l]}, 1)
           end

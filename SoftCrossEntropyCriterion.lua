@@ -56,7 +56,7 @@ function SoftCrossEntropyCriterion:updateGradInput(input, target)
   else
     error('matrix or vector expected. input size: ' .. tostring(input:size()))
   end
-  return self.gradInput
+  return self.gradInput * self.temperature * self.temperature
 end
 
 return SoftCrossEntropyCriterion

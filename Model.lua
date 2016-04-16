@@ -21,6 +21,7 @@ function M:__init(path)
   if path then
     self:load(path)
   end
+  setDropout(self.model, opts.dropout)
   Parent.__init(self, self.model)
 
   print('=> Model')
@@ -74,6 +75,9 @@ local function updateModel(model, gradParams, loss, cnt, stats)
   model.loss = model.loss + loss
   model.count = model.count + cnt
   if gradParams then
+    if nGPU > 0 and gradParams:getDevice() ~= 1 then
+      gradParams = gradParams:clone()
+    end
     model.gradParams:add(gradParams)
   end
   if opts.epoch % opts.updateEvery == 0 then

@@ -1,7 +1,5 @@
-cv = require 'cv'
-require 'cv.cudawarping'
-require 'cv.imgcodecs'
 require 'fbnn'
+local Transforms = require 'Transforms'
 local Processor = require 'Processor'
 local M = torch.class('ImageNetProcessor', 'Processor')
 
@@ -65,17 +63,8 @@ end
 
 function M.preprocess(path, isTraining, processorOpts)
   local img = image.load(path, 3)
-
-  -- find the smaller dimension, and resize it to processorOpts.resize
-  local sz = processorOpts.resize
-  if img:size(3) < img:size(2) then
-    img = image.scale(img, sz, sz * img:size(2) / img:size(3))
-  else
-    img = image.scale(img, sz * img:size(3) / img:size(2), sz)
-  end
-
-  sz = processorOpts.cropSize
-  img = image.crop(img, 'c', sz, sz)
+  img = Transforms.Scale(processorOpts.resize)(img)
+  img = Transforms.CenterCrop(processorOpts.cropSize)(img)
 
   if processorOpts.inceptionPreprocessing then
     img = (img * 255 - 128) / 128

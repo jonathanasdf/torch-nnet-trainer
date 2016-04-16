@@ -7,6 +7,7 @@ function defineBaseOptions(cmd)
   cmd:option('-processorOpts', '', 'additional options for the processor')
   cmd:option('-batchSize', 32, 'batch size')
   cmd:option('-epochSize', -1, 'num batches per epochs. -1 means run all available data once')
+  cmd:option('-dropout', 0.5, 'dropout probability')
   cmd:option('-nThreads', 4, 'number of worker threads')
   cmd:option('-replicateModel', false, 'Replicate model across threads? Speeds up everything, but takes more memory')
   cmd:option('-nGPU', 1, 'number of GPU to use. Set to -1 to use CPU')
@@ -242,9 +243,6 @@ function string:split(sep)
 end
 
 function findModuleByName(model, name)
-  if torch.isTypeOf(model, 'Model') then
-    return findModuleByName(model.model, name)
-  end
   if model.modules then
     for i=1,#model.modules do
       local recur = findModuleByName(model.modules[i], name)
@@ -255,6 +253,16 @@ function findModuleByName(model, name)
     end
   end
   return nil
+end
+
+function setDropout(model, p)
+  if torch.isTypeOf(model, 'nn.Dropout') then
+    model:setp(p)
+  elseif model.modules then
+    for i=1,#model.modules do
+      setDropout(model.modules[i], p)
+    end
+  end
 end
 
 function printOutputSizes(model)

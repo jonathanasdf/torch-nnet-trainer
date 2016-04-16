@@ -123,13 +123,7 @@ function M.backward(inputs, gradOutputs, gradLayer)
 
   local gradParams
   if isReplica then
-    if nGPU > 0 and model.gradParams:getDevice() ~= 1 then
-      cutorch.setDevice(1)
-      gradParams = model.gradParams:clone()
-      cutorch.setDevice(gpu)
-    else
-      gradParams = model.gradParams:clone()
-    end
+    gradParams = model.gradParams:clone()
   end
   return gradParams
 end

@@ -22,6 +22,7 @@ opts.processor.model = model
 opts.processor:initializeThreads()
 
 local function getData(pathNames, inputs)
+  if nGPU > 0 and not(inputs.getDevice) then inputs = inputs:cuda() end
   local labels = opts.processor.getLabels(pathNames)
 
   mutex:lock()

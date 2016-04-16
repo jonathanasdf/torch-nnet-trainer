@@ -18,15 +18,17 @@ defineBaseOptions(cmd)     --defined in utils.lua
 defineTrainingOptions(cmd) --defined in train.lua
 cmd:option('-teacherProcessor', '', 'alternate processor for teacher model')
 cmd:option('-teacherProcessorOpts', '', 'alternate processor options for teacher model')
-cmd:option('-matchLayer', 2, 'which layers to match outputs, counting from the end. Defaults to second last layer.')
-cmd:option('-T', 2, 'temperature')
+cmd:option('-matchLayer', 2, 'which layers to match outputs, counting from the end. Defaults to second last layer')
+cmd:option('-useMSE', false, 'Use mean squared error instead of soft cross entropy')
+cmd:option('-T', 2, 'temperature for soft cross entropy')
 cmd:option('-lambda', 0.5, 'hard target relative weight')
 processArgs(cmd)
 
 assert(paths.filep(opts.teacher), 'Cannot find teacher model ' .. opts.teacher)
 assert(paths.filep(opts.student), 'Cannot find student model ' .. opts.student)
 
-local criterion = SoftCrossEntropyCriterion(opts.T)
+local criterion = opts.useMSE and nn.MSECriterion() or SoftCrossEntropyCriterion(opts.T)
+criterion.sizeAverage = false
 if nGPU > 0 then
   criterion = criterion:cuda()
 end
@@ -116,7 +118,7 @@ local function train(pathNames, studentInputs)
   local studentLayerOutputs = model.model:get(processor.studentLayer).output
 
   local softLoss = softCriterion:forward(studentLayerOutputs, teacherLayerOutputs)
-  local softGradOutputs = softCriterion:backward(studentLayerOutputs, teacherLayerOutputs)*opts.T*opts.T
+  local softGradOutputs = softCriterion:backward(studentLayerOutputs, teacherLayerOutputs)
   local softGradParams = processor.backward(studentInputs, softGradOutputs, processor.studentLayer)
 
   -- Hard labels
