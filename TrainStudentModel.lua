@@ -33,33 +33,33 @@ if nGPU > 0 then
   criterion = criterion:cuda()
 end
 
-local localTeacher = Model(opts.teacher)
-local localTeacherProcessor
+local teacher = Model(opts.teacher)
+local teacherProcessor
 if opts.teacherProcessor ~= '' then
+  local processorOpts = opts.processorOpts
   if opts.teacherProcessorOpts ~= '' then
-    opts.processorOpts = opts.teacherProcessorOpts
+    processorOpts = opts.teacherProcessorOpts
   end
-  localTeacherProcessor = requirePath(opts.teacherProcessor).new()
+  teacherProcessor = requirePath(opts.teacherProcessor).new(teacher, processorOpts)
 end
 
 local student = Model(opts.student)
-opts.processor.model = student
-
-opts.processor.studentLayer = #student.model.modules - opts.matchLayer + 1
-for i=opts.processor.studentLayer+1,#student.model.modules do
+local studentProcessor = requirePath(opts.processor).new(student, opts.processorOpts)
+studentProcessor.studentLayer = #student.model.modules - opts.matchLayer + 1
+for i=studentProcessor.studentLayer+1,#student.model.modules do
   student.model:remove()
 end
-opts.processor.teacherLayer = #localTeacher.model.modules - opts.matchLayer + 1
-for i=opts.processor.teacherLayer+1,#localTeacher.model.modules do
-  student.model:add(localTeacher.model:get(i):clone())
+studentProcessor.teacherLayer = #teacher.model.modules - opts.matchLayer + 1
+for i=studentProcessor.teacherLayer+1,#teacher.model.modules do
+  student.model:add(teacher.model:get(i):clone())
 end
-
-opts.processor:initializeThreads()
+studentProcessor.lambda = opts.lambda
+studentProcessor:initializeThreads()
 
 
 if nThreads == 0 then
-  teacher = localTeacher
-  teacherProcessor = localTeacherProcessor
+  _teacher = teacher
+  _teacherProcessor = teacherProcessor
   teacherMutex = {}
   teacherMutex.lock = function() end
   teacherMutex.unlock = function() end
@@ -69,6 +69,7 @@ else
   threads:specific(true)
   if nGPU > 0 then assert(cutorch.getDevice() == 1) end
   local nDevices = math.max(nGPU, 1)
+  local localTeacher = teacher
   for device=1,nDevices do
     if device ~= 1 then
       cutorch.setDevice(device)
@@ -83,9 +84,9 @@ else
       )
       threads:addjob(i,
         function()
-          teacher = localTeacher
-          if opts.teacherProcessor ~= '' then
-            teacherProcessor = localTeacherProcessor
+          _teacher = localTeacher
+          if teacherProcessor then
+            _teacherProcessor = teacherProcessor
           end
           teacherMutex = (require 'threads').Mutex(teacherMutexId)
           softCriterion = criterion:clone()
@@ -100,32 +101,32 @@ end
 
 local function train(pathNames, studentInputs)
   if nGPU > 0 and not(studentInputs.getDevice) then studentInputs = studentInputs:cuda() end
-  local labels = processor.getLabels(pathNames)
+  local labels = _processor.getLabels(pathNames)
 
   local teacherInputs = studentInputs
-  if teacherProcessor then
-    _, teacherInputs = DataLoader.loadInputs(pathNames, bindPost(teacherProcessor.preprocessFn, true))
+  if _teacherProcessor then
+    _, teacherInputs = DataLoader.loadInputs(pathNames, bindPost(_teacherProcessor.preprocessFn, true))
     if nGPU > 0 and not(teacherInputs.getDevice) then teacherInputs = teacherInputs:cuda() end
   end
 
   teacherMutex:lock()
-  teacher:forward(teacherInputs, true)
-  local teacherLayerOutputs = teacher.model:get(processor.teacherLayer).output:clone()
+  _teacher:forward(teacherInputs, true)
+  local teacherLayerOutputs = _teacher.model:get(_processor.teacherLayer).output:clone()
   teacherMutex:unlock()
 
   mutex:lock()
-  local studentOutputs = model:forward(studentInputs)
-  local studentLayerOutputs = model.model:get(processor.studentLayer).output
+  local studentOutputs = _model:forward(studentInputs)
+  local studentLayerOutputs = _model.model:get(_processor.studentLayer).output
 
   local softLoss = softCriterion:forward(studentLayerOutputs, teacherLayerOutputs)
   local softGradOutputs = softCriterion:backward(studentLayerOutputs, teacherLayerOutputs)
-  local softGradParams = processor.backward(studentInputs, softGradOutputs, processor.studentLayer)
+  local softGradParams = _processor.backward(studentInputs, softGradOutputs, _processor.studentLayer)
 
   -- Hard labels
-  local hardLoss = processor.criterion:forward(studentOutputs, labels)*opts.lambda
-  local stats = processor.calcStats(pathNames, studentOutputs, labels)
-  local hardGradOutputs = processor.criterion:backward(studentOutputs, labels)*opts.lambda
-  local hardGradParams = processor.backward(studentInputs, hardGradOutputs)
+  local hardLoss = _processor.criterion:forward(studentOutputs, labels)*_processor.lambda
+  local stats = _processor.calcStats(pathNames, studentOutputs, labels)
+  local hardGradOutputs = _processor.criterion:backward(studentOutputs, labels)*_processor.lambda
+  local hardGradParams = _processor.backward(studentInputs, hardGradOutputs)
 
   local gradParams
   if softGradParams then

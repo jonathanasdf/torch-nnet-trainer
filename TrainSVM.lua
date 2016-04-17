@@ -18,16 +18,16 @@ processArgs(cmd)
 assert(paths.filep(opts.model), 'Cannot find model ' .. opts.model)
 
 local model = Model(opts.model)
-opts.processor.model = model
-opts.processor:initializeThreads()
+local processor = requirePath(opts.processor).new(model, opts.processorOpts)
+processor:initializeThreads()
 
 local function getData(pathNames, inputs)
   if nGPU > 0 and not(inputs.getDevice) then inputs = inputs:cuda() end
-  local labels = opts.processor.getLabels(pathNames)
+  local labels = _processor.getLabels(pathNames)
 
   mutex:lock()
-  model:forward(inputs, true)
-  local outputs = findModuleByName(model, opts.layer).output:clone()
+  _model:forward(inputs, true)
+  local outputs = findModuleByName(_model, opts.layer).output:clone()
   mutex:unlock()
 
   return convertTensorToSVMLight(labels, outputs)
@@ -45,7 +45,7 @@ DataLoader{inputs = opts.input}:runAsync(
   opts.batchSize,
   opts.epochSize,
   true,           -- randomSample,
-  bindPost(opts.processor.preprocessFn, true),
+  bindPost(processor.preprocessFn, true),
   getData,
   accumulateData)
 

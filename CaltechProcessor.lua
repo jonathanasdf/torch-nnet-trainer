@@ -17,7 +17,7 @@ local function defineSlidingWindowOptions(cmd)
   cmd:option('-posMinBoxSize', 225, 'minimum ground truth box size to be counted as a positive example')
 end
 
-function M:__init()
+function M:__init(model, processorOpts)
   self.cmd:option('-imageSize', 113, 'What to resize to.')
   self.cmd:option('-inceptionPreprocessing', false, 'Preprocess for inception models (RGB, [-1, 1))')
   self.cmd:option('-caffePreprocessing', false, 'Preprocess for caffe models (BGR, [0, 255])')
@@ -30,7 +30,7 @@ function M:__init()
   self.cmd:option('-drawBoxThreshold', 0.95, 'score threshold to count as positive')
   self.cmd:option('-fullEval', '', 'set a directory to use for full evaluation')
   defineSlidingWindowOptions(self.cmd)
-  Processor.__init(self)
+  Processor.__init(self, model, processorOpts)
 
   if self.processorOpts.inceptionPreprocessing then
     -- no mean normalization
@@ -92,6 +92,20 @@ function M:__init()
     end
   end
 
+  local nPatches = 0
+  local scale = 1
+  for s=0,self.processorOpts.windowScales do
+    local w = 320
+    local h = 240
+    local sizex = math.ceil(self.processorOpts.windowSizeX * scale)
+    local sizey = math.ceil(self.processorOpts.windowSizeY * scale)
+    local sx = math.max(1, math.floor(self.processorOpts.windowStride * sizex))
+    local sy = math.max(1, math.floor(self.processorOpts.windowStride * sizey))
+    nPatches = nPatches + math.ceil((h-sizey+1)/sy)*math.ceil((w-sizex+1)/sx)
+    scale = scale * self.processorOpts.windowDownscaling
+  end
+  print('Patches per images with current settings:', nPatches)
+
   local w = self.processorOpts.negativesWeight
   local weights = torch.Tensor{w/(1+w), 1/(1+w)} * 2
   self.criterion = nn.TrueNLLCriterion(weights)
@@ -141,7 +155,7 @@ end
 function M.calcStats(pathNames, outputs, labels)
   local pred
   if processorOpts.svm == '' then
-    pred = outputs[{{},{2}}]:float()
+    pred = outputs[{{},{2}}]
   else
     if not(processorOpts.svmmodel) then
       processorOpts.svmmodel = torch.load(processorOpts.svm)
@@ -149,7 +163,7 @@ function M.calcStats(pathNames, outputs, labels)
     local data = convertTensorToSVMLight(labels, outputs)
     pred = liblinear.predict(data, processorOpts.svmmodel, '-q')
   end
-  return {pred, labels}
+  return {pred:float(), labels}
 end
 
 function M:resetStats()
@@ -157,7 +171,7 @@ function M:resetStats()
 end
 
 function M:accStats(new_stats)
-  self.stats:batchAdd(torch.ge(new_stats[1], self.processorOpts.overlap) + 1, new_stats[2])
+  self.stats:batchAdd(torch.ge(new_stats[1], processorOpts.overlap) + 1, new_stats[2])
 end
 
 function M:processStats(phase)
@@ -218,14 +232,14 @@ local function findSlidingWindows(outputPatches, outputCoords, outputLabels, img
 
   local sz = processorOpts.imageSize
   local sizex = ceil(processorOpts.windowSizeX * scale)
-  processor.windowSizeX = sizex
   local sizey = ceil(processorOpts.windowSizeY * scale)
-  processor.windowSizeY = sizey
   local sx = max(1, floor(processorOpts.windowStride * sizex))
   local sy = max(1, floor(processorOpts.windowStride * sizey))
-  local h = img:size(2)
   local w = img:size(3)
+  local h = img:size(2)
   local c = img:size(1)
+  assert(w >= sizex)
+  assert(h >= sizey)
   local nPatches = ceil((h-sizey+1)/sy)*ceil((w-sizex+1)/sx)
   if start > nPatches then
     return false
@@ -266,9 +280,9 @@ local function findSlidingWindows(outputPatches, outputCoords, outputLabels, img
 end
 
 function M.forward(inputs, deterministic)
-  local outputs = model:forward(inputs, deterministic)
+  local outputs = _model:forward(inputs, deterministic)
   if processorOpts.svm ~= '' then
-    outputs = findModuleByName(model, processorOpts.layer).output
+    outputs = findModuleByName(_model, processorOpts.layer).output
   end
   outputs = outputs:view(inputs:size(1), -1)
   return outputs
@@ -290,14 +304,14 @@ function M.test(pathNames, inputs)
   for i=1,nInputs do
     local boxes = torch.Tensor()
     local path = pathNames[i]
-    local bboxes = processor.bboxes[path:find('val') and 1 or 2]
+    local bboxes = _processor.bboxes[path:find('val') and 1 or 2]
     local index = tonumber(paths.basename(path, 'png'))
     local scale = 1
     for s=0,processorOpts.windowScales do
       local start = 1
       while true do
         if not findSlidingWindows(patches, coords, labels, inputs[i], bboxes[index], scale, start) then break end
-        local loss, total, stats = processor.testWithLabels(nil, patches, labels)
+        local loss, total, stats = _processor.testWithLabels(nil, patches, labels)
         boxes = cat(boxes, cat(coords, stats[1]:view(-1, 1), 2), 1)
         aggLoss = aggLoss + loss
         aggTotal = aggTotal + total
@@ -309,12 +323,12 @@ function M.test(pathNames, inputs)
       scale = scale * processorOpts.windowDownscaling
     end
 
-    if processorOpts.drawBoxes or processorOpts.fullEval then
+    if processorOpts.drawBoxes ~= '' or processorOpts.fullEval ~= '' then
       local I = nms(boxes, processorOpts.overlap)
       boxes = boxes:index(1, I)
     end
 
-    if processorOpts.drawBoxes then
+    if processorOpts.drawBoxes ~= '' then
       local img = image.load(path, 3)
       for j=1,boxes:size(1) do
         local label = maxOverlap(bboxes[index], boxes[j]) >= processorOpts.overlap and 2 or 1
@@ -359,8 +373,8 @@ function M.test(pathNames, inputs)
       image.save(processorOpts.drawBoxes .. '/' .. paths.basename(path), img)
     end
 
-    if processorOpts.fullEval then
-      local mapping = processor.mappings[path:find('val') and 1 or 2]
+    if processorOpts.fullEval ~= '' then
+      local mapping = _processor.mappings[path:find('val') and 1 or 2]
       local filename = processorOpts.fullEval .. '/res/' .. mapping[paths.basename(path)]
       paths.mkdir(paths.dirname(filename))
       local file, err = io.open(filename, 'w')

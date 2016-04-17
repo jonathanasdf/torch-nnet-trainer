@@ -3,12 +3,12 @@ local Transforms = require 'Transforms'
 local Processor = require 'Processor'
 local M = torch.class('ImageNetProcessor', 'Processor')
 
-function M:__init()
+function M:__init(model, processorOpts)
   self.cmd:option('-resize', 256, 'What size to crop to.')
   self.cmd:option('-cropSize', 224, 'What size to crop to.')
   self.cmd:option('-inceptionPreprocessing', false, 'Preprocess for inception models (RGB, [-1, 1))')
   self.cmd:option('-caffePreprocessing', false, 'Preprocess for caffe models (BGR, [0, 255])')
-  Processor.__init(self)
+  Processor.__init(self, model, processorOpts)
   assert(self.processorOpts.cropSize <= self.processorOpts.resize)
 
   local synset = '/file/imagenet/ILSVRC2012_devkit_t12/words.txt'
@@ -87,10 +87,10 @@ function M.getLabels(pathNames)
     local name = pathNames[i]
     local filename = paths.basename(name)
     if name:find('train') then
-      labels[i] = processor.lookup[string.sub(filename, 1, 9)]
+      labels[i] = _processor.lookup[string.sub(filename, 1, 9)]
     else
       assert(name:find('val'))
-      labels[i] = processor.val[tonumber(string.sub(filename, -12, -5))]
+      labels[i] = _processor.val[tonumber(string.sub(filename, -12, -5))]
     end
   end
   return labels
@@ -109,10 +109,10 @@ function M.calcStats(pathNames, outputs, labels)
         top5 = top5 + 1
         color = '\27[33m'
       end
-      result = result .. color .. '(' .. math.floor(prob[j]*100 + 0.5) .. '%) ' .. processor.words[classes[j]] .. '\27[0m; '
+      result = result .. color .. '(' .. math.floor(prob[j]*100 + 0.5) .. '%) ' .. _processor.words[classes[j]] .. '\27[0m; '
     end
     if labels[i] ~= -1 then
-      result = result .. '\27[36mground truth: ' .. processor.words[labels[i]] .. '\27[0m'
+      result = result .. '\27[36mground truth: ' .. _processor.words[labels[i]] .. '\27[0m'
     end
     --print(result)
   end

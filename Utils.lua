@@ -88,9 +88,6 @@ function processArgs(cmd)
   if opts.processor == '' then
     error('A processor must be supplied.')
   end
-  local processorPath = opts.processor
-  opts.processor = requirePath(opts.processor).new()
-
   if opts.nThreads > 0 then
     local opt = opts
     torch.setnumthreads(opts.nThreads)
@@ -118,7 +115,6 @@ function processArgs(cmd)
 
         require 'Model'
         require 'Utils'
-        requirePath(processorPath)
 
         local min = math.min
         local max = math.max
@@ -130,6 +126,7 @@ function processArgs(cmd)
         opts = opt
         nGPU = opts.nGPU
         nThreads = opts.nThreads
+        requirePath(opts.processor)
       end
     )
   else

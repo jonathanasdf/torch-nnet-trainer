@@ -70,26 +70,26 @@ function M:forward(inputs, deterministic)
   return self.model:forward(inputs)
 end
 
-local function updateModel(model, gradParams, loss, cnt, stats)
-  opts.processor:accStats(stats)
-  model.loss = model.loss + loss
-  model.count = model.count + cnt
+local function updateModel(gradParams, loss, cnt, stats)
+  _processor:accStats(stats)
+  _model.loss = _model.loss + loss
+  _model.count = _model.count + cnt
   if gradParams then
     if nGPU > 0 and gradParams:getDevice() ~= 1 then
       gradParams = gradParams:clone()
     end
-    model.gradParams:add(gradParams)
+    _model.gradParams:add(gradParams)
   end
   if opts.epoch % opts.updateEvery == 0 then
-    opts.processor:updateModel()
+    _processor:updateModel()
   end
   jobDone()
 end
 
-local function accValResults(model, loss, cnt, stats)
-  opts.processor:accStats(stats)
-  model.loss = model.loss + loss
-  model.count = model.count + cnt
+local function accValResults(loss, cnt, stats)
+  _processor:accStats(stats)
+  _model.loss = _model.loss + loss
+  _model.count = _model.count + cnt
   jobDone()
 end
 
@@ -97,11 +97,14 @@ function M:train(trainFn, valFn)
   if not(opts.input) then
     error('Input must be defined for training.')
   end
+  if _model ~= self then
+    error('You can only train the main model.')
+  end
   if not trainFn then
-    trainFn = opts.processor.train
+    trainFn = _processor.train
   end
   if not valFn then
-    valFn = opts.processor.test
+    valFn = _processor.test
   end
 
   local trainLoader = DataLoader{inputs = opts.input, weights = opts.inputWeights}
@@ -144,32 +147,32 @@ function M:train(trainFn, valFn)
 
     self.loss = 0
     self.count = 0
-    opts.processor:resetStats()
+    _processor:resetStats()
     trainLoader:runAsync(opts.batchSize,
                          opts.epochSize,
                          true, --randomSample
-                         bindPost(opts.processor.preprocessFn, true),
+                         bindPost(_processor.preprocessFn, true),
                          trainFn,
-                         bind(updateModel, self))
+                         updateModel)
     self.loss = self.loss / self.count
     self.trainLoss[epoch] = self.loss
     print(string.format('  Training loss: %.6f', self.loss))
-    printlog(opts.processor:processStats('train'))
+    logprint(_processor:processStats('train'))
 
     if opts.val ~= '' and epoch % opts.valEvery == 0 then
       self.loss = 0
       self.count = 0
-      opts.processor:resetStats()
+      _processor:resetStats()
       validLoader:runAsync(opts.valBatchSize,
                            opts.valSize,
                            false, --randomSample
-                           bindPost(opts.processor.preprocessFn, false),
+                           bindPost(_processor.preprocessFn, false),
                            valFn,
-                           bind(accValResults, self))
+                           accValResults)
       self.loss = self.loss / self.count
       self.valLoss[epoch] = self.loss
       print(string.format('  Validation loss: %.6f', self.loss))
-      print(opts.processor:processStats('val'))
+      print(_processor:processStats('val'))
       print()
     end
 
@@ -202,7 +205,7 @@ end
 function M:save(filename)
   self:clearState()
   augmentThreadState(function()
-    model:clearState()
+    _model:clearState()
   end)
   torch.save(filename, self.model)
   opts.optimState.dfdx = nil

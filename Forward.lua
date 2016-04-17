@@ -14,38 +14,41 @@ processArgs(cmd)
 assert(paths.filep(opts.model), 'Cannot find model ' .. opts.model)
 
 local model = Model(opts.model)
-opts.processor.model = model
-opts.processor:initializeThreads()
-opts.processor:resetStats()
+local processor = requirePath(opts.processor).new(model, opts.processorOpts)
+processor:initializeThreads()
+
 local loader = DataLoader{inputs = opts.input, randomize = true}
 local state = {shuffle = loader.shuffle, completed = 0}
-opts.cacheFile = os.tmpname()
 if opts.resume ~= '' then
+  print("Resuming from cache file: " .. opts.resume)
   opts.cacheFile = opts.resume
   state = torch.load(opts.resume)
   loader.shuffle = state.shuffle
-  opts.processor.stats = state.stats
+  processor.stats = state.stats
+else
+  opts.cacheFile = os.tmpname()
+  print("Cache file: " .. opts.cacheFile)
 end
-print("Cache file: " .. opts.cacheFile)
 
 local function accResults(loss, cnt, stats)
-  opts.processor:accStats(stats)
+  processor:accStats(stats)
   jobDone()
 
   state.completed = state.completed + 1
   if opts.cacheEvery ~= -1 and state.completed % opts.cacheEvery == 0 then
-    state.stats = opts.processor.stats
+    state.stats = processor.stats
     torch.save(opts.cacheFile, state)
   end
 end
 
+processor:resetStats()
 loader:runAsync(
   opts.batchSize,
   opts.epochSize,
   false,               -- randomSample,
-  bindPost(opts.processor.preprocessFn, false),
-  opts.processor.test,
+  bindPost(processor.preprocessFn, false),
+  processor.test,
   accResults,
   state.completed + 1) -- startBatch
-print(opts.processor:processStats())
+print(processor:processStats())
 print()

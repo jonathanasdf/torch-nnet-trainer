@@ -2,8 +2,8 @@ local Transforms = require 'Transforms'
 local CaltechProcessor = require 'CaltechProcessor'
 local M = torch.class('CaltechHogLuvProcessor', 'CaltechProcessor')
 
-function M:__init()
-  CaltechProcessor.__init(self)
+function M:__init(model, processorOpts)
+  CaltechProcessor.__init(self, model, processorOpts)
 end
 
 function M.preprocess(path, isTraining, processorOpts)
