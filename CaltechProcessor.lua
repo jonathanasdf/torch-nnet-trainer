@@ -1,6 +1,6 @@
 require 'draw'
 require 'fbnn'
-matio = require 'matio'
+local nms = require 'nms'
 require 'optim'
 require 'svm'
 
@@ -9,13 +9,11 @@ local Processor = require 'Processor'
 local M = torch.class('CaltechProcessor', 'Processor')
 
 local function defineSlidingWindowOptions(cmd)
-  cmd:option('-windowSizeX', 30, 'width of sliding window')
-  cmd:option('-windowSizeY', 50, 'height of sliding window')
-  cmd:option('-windowStrideX', 0.5, 'horizontal stride of sliding window as fraction of width')
-  cmd:option('-windowStrideY', 0.5, 'vertical stride of sliding window as fraction of height')
+  cmd:option('-windowSizeX', 41, 'width of sliding window')
+  cmd:option('-windowSizeY', 100, 'height of sliding window')
+  cmd:option('-windowStride', 0.3, 'stride of sliding window as fraction of size')
   cmd:option('-windowScales', 2, 'how many times to downscale window (0 = no downscaling)')
-  cmd:option('-windowDownscaling', 0.75, 'what percent to downscale window')
-  cmd:option('-windowIOU', 0.5, 'what IOU to count as a positive example')
+  cmd:option('-windowDownscaling', 0.5, 'what percent to downscale window')
   cmd:option('-posMinBoxSize', 225, 'minimum ground truth box size to be counted as a positive example')
 end
 
@@ -24,10 +22,13 @@ function M:__init()
   self.cmd:option('-inceptionPreprocessing', false, 'Preprocess for inception models (RGB, [-1, 1))')
   self.cmd:option('-caffePreprocessing', false, 'Preprocess for caffe models (BGR, [0, 255])')
   self.cmd:option('-flip', 0.5, 'Probability to do horizontal flip (for training)')
+  self.cmd:option('-overlap', 0.5, 'what IOU to count as a positive example, and for NMS')
   self.cmd:option('-negativesWeight', 1, 'Relative weight of negative examples')
   self.cmd:option('-svm', '', 'SVM to use')
   self.cmd:option('-layer', 'fc7', 'layer to use as SVM input')
   self.cmd:option('-drawBoxes', '', 'set a directory to save images of losses')
+  self.cmd:option('-drawBoxThreshold', 0.95, 'score threshold to count as positive')
+  self.cmd:option('-fullEval', '', 'set a directory to use for full evaluation')
   defineSlidingWindowOptions(self.cmd)
   Processor.__init(self)
 
@@ -40,10 +41,21 @@ function M:__init()
     self.processorOpts.std = torch.Tensor{0.229, 0.224, 0.225}:view(3, 1, 1)
   end
 
+  local matio = require 'matio'
   self.bboxes = {
     matio.load('/file/caltech/val/box.mat', 'box'),
     matio.load('/file/caltech/test/box.mat', 'box')
   }
+
+  self.mappings = {{}, {}}
+  for line in io.lines('/file/caltech/val/mapping.txt') do
+    local s = line:split()
+    self.mappings[1][s[1]] = s[2]
+  end
+  for line in io.lines('/file/caltech/test/mapping.txt') do
+    local s = line:split()
+    self.mappings[2][s[1]] = s[2]
+  end
 
   if opts.logdir and opts.epochs then
     self.trainGraph = gnuplot.pngfigure(opts.logdir .. 'train.png')
@@ -62,6 +74,21 @@ function M:__init()
       self.valPosAcc = torch.Tensor(opts.epochs)
       self.valNegAcc = torch.Tensor(opts.epochs)
       self.valAcc = torch.Tensor(opts.epochs)
+    end
+  end
+
+  if self.processorOpts.drawBoxes ~= '' then
+    paths.mkdir(self.processorOpts.drawBoxes)
+  end
+  if self.processorOpts.fullEval ~= '' then
+    if opts.epochSize ~= -1 then
+      error('fullEval requires epochSize == -1')
+    end
+    if not(opts.resume) or opts.resume == '' then
+      if paths.dir(self.processorOpts.fullEval) ~= nil then
+        error('fullEval directory exists! Aborting')
+      end
+      paths.mkdir(self.processorOpts.fullEval)
     end
   end
 
@@ -113,33 +140,14 @@ end
 
 function M.calcStats(pathNames, outputs, labels)
   local pred
-  if processor.processorOpts.svm == '' then
-    _, pred = torch.max(outputs, 2)
+  if processorOpts.svm == '' then
+    pred = outputs[{{},{2}}]:float()
   else
-    if not(processor.processorOpts.svmmodel) then
-      processor.processorOpts.svmmodel = torch.load(processor.processorOpts.svm)
+    if not(processorOpts.svmmodel) then
+      processorOpts.svmmodel = torch.load(processorOpts.svm)
     end
     local data = convertTensorToSVMLight(labels, outputs)
-    pred = liblinear.predict(data, processor.processorOpts.svmmodel, '-q')
-  end
-  pred = pred:view(-1)
-
-  for i=1,labels:size(1) do
-    local color
-    if labels[i] == 2 then
-      if pred[i] == 2 then
-        color = {0, 1.0, 0} -- green - true positive
-      else
-        color = {1.0, 0, 0} -- red - false negative
-      end
-    else
-      if pred[i] == 2 then
-        color = {0, 0, 1.0} -- blue - false positive
-      end
-    end
-    if processor.processorOpts.drawBoxes ~= '' and color then
-      draw.rectangle(processor.currentImage, processor.windowX[i], processor.windowY[i], processor.windowX[i] + processor.windowSizeX - 1, processor.windowY[i] + processor.windowSizeY - 1, 1, color)
-    end
+    pred = liblinear.predict(data, processorOpts.svmmodel, '-q')
   end
   return {pred, labels}
 end
@@ -149,7 +157,7 @@ function M:resetStats()
 end
 
 function M:accStats(new_stats)
-  self.stats:batchAdd(new_stats[1], new_stats[2])
+  self.stats:batchAdd(torch.ge(new_stats[1], self.processorOpts.overlap) + 1, new_stats[2])
 end
 
 function M:processStats(phase)
@@ -176,19 +184,45 @@ function M:processStats(phase)
   return tostring(self.stats)
 end
 
-local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scale, start)
+local function maxOverlap(bboxes, coords)
+  local min = math.min
+  local max = math.max
+  local m = 0
+  if bboxes:nElement() ~= 0 then
+    local SA = (coords[3]-coords[1]+1)*(coords[4]-coords[2]+1)
+    for i=1,bboxes:size(1) do
+      local XB1 = bboxes[i][1]
+      local XB2 = bboxes[i][1]+bboxes[i][3]-1
+      local YB1 = bboxes[i][2]
+      local YB2 = bboxes[i][2]+bboxes[i][4]-1
+      local SB = bboxes[i][3]*bboxes[i][4]
+
+      if SB >= processorOpts.posMinBoxSize then
+        local SI = max(0, min(coords[3], XB2) - max(coords[1], XB1) + 1) *
+                   max(0, min(coords[4], YB2) - max(coords[2], YB1) + 1)
+        local SU = SA + SB - SI
+        if SI/SU >= m then
+          m = SI/SU
+        end
+      end
+    end
+  end
+  return m
+end
+
+local function findSlidingWindows(outputPatches, outputCoords, outputLabels, img, bboxes, scale, start)
   local min = math.min
   local max = math.max
   local floor = math.floor
   local ceil = math.ceil
 
-  local sz = processor.processorOpts.imageSize
-  local sizex = ceil(processor.processorOpts.windowSizeX * scale)
+  local sz = processorOpts.imageSize
+  local sizex = ceil(processorOpts.windowSizeX * scale)
   processor.windowSizeX = sizex
-  local sizey = ceil(processor.processorOpts.windowSizeY * scale)
+  local sizey = ceil(processorOpts.windowSizeY * scale)
   processor.windowSizeY = sizey
-  local sx = max(1, floor(processor.processorOpts.windowStrideX * sizex))
-  local sy = max(1, floor(processor.processorOpts.windowStrideY * sizey))
+  local sx = max(1, floor(processorOpts.windowStride * sizex))
+  local sy = max(1, floor(processorOpts.windowStride * sizey))
   local h = img:size(2)
   local w = img:size(3)
   local c = img:size(1)
@@ -200,7 +234,8 @@ local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scal
   local count = finish - start + 1
 
   outputPatches:resize(count, c, sz, sz)
-  outputLabels:resize(count):fill(1)
+  outputCoords:resize(count, 4)
+  outputLabels:resize(count)
 
   if img.getDevice then
     img = img:permute(2, 3, 1)
@@ -209,8 +244,6 @@ local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scal
   local id = 0
   local cnt = 0
   local nCols = 0
-  processor.windowX = {}
-  processor.windowY = {}
   for j=1,h-sizey+1,sy do
     for k=1,w-sizex+1,sx do
       id = id + 1
@@ -224,44 +257,8 @@ local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scal
         else
           outputPatches[cnt] = image.scale(img[{{}, {j, j+sizey-1}, {k, k+sizex-1}}], sz, sz):cuda()
         end
-        processor.windowX[cnt] = k
-        processor.windowY[cnt] = j
-      end
-    end
-  end
-
-  if bboxes:nElement() ~= 0 then
-    local SA = sizex*sizey
-    for i=1,bboxes:size(1) do
-      local XB1 = bboxes[i][1]
-      local XB2 = bboxes[i][1]+bboxes[i][3]
-      local YB1 = bboxes[i][2]
-      local YB2 = bboxes[i][2]+bboxes[i][4]
-      local SB = bboxes[i][3]*bboxes[i][4]
-
-      if SB >= processor.processorOpts.posMinBoxSize then
-        local left = max(0, ceil((XB1-sizex)/sx))
-        local right = floor(XB2/sx)
-        local top = max(0, ceil((YB1-sizey)/sy))
-        local bottom = floor(YB2/sy)
-        for j=top,bottom do
-          for k=left,right do
-            id = j*nCols+k+1
-            if id >= start and id <= finish then
-              local XA1 = k*sx
-              local XA2 = k*sx+sizex
-              local YA1 = j*sy
-              local YA2 = j*sy+sizey
-
-              local SI = max(0, min(XA2, XB2) - max(XA1, XB1)) *
-                         max(0, min(YA2, YB2) - max(YA1, YB1))
-              local SU = SA + SB - SI
-              if SI/SU > processor.processorOpts.windowIOU then
-                outputLabels[id-start+1] = 2
-              end
-            end
-          end
-        end
+        outputCoords[cnt] = torch.Tensor{k, j, k+sizex-1, j+sizey-1}
+        outputLabels[cnt] = maxOverlap(bboxes, outputCoords[cnt]) >= processorOpts.overlap and 2 or 1
       end
     end
   end
@@ -270,8 +267,8 @@ end
 
 function M.forward(inputs, deterministic)
   local outputs = model:forward(inputs, deterministic)
-  if processor.processorOpts.svm ~= '' then
-    outputs = findModuleByName(model, processor.processorOpts.layer).output
+  if processorOpts.svm ~= '' then
+    outputs = findModuleByName(model, processorOpts.layer).output
   end
   outputs = outputs:view(inputs:size(1), -1)
   return outputs
@@ -281,55 +278,99 @@ function M.test(pathNames, inputs)
   local min = math.min
   local aggLoss = 0
   local aggTotal = 0
-  local aggStats = {}
+  local aggStats = {torch.Tensor(), torch.Tensor()}
+  local coords = torch.Tensor()
   local patches = torch.Tensor()
   local labels = torch.Tensor()
   if nGPU > 0 then
     patches = patches:cuda()
     labels = labels:cuda()
   end
-  local outdir
-  if processor.processorOpts.drawBoxes ~= '' then
-    outdir = processor.processorOpts.drawBoxes .. '/'
-    paths.mkdir(outdir)
-  end
   local nInputs = #pathNames
   for i=1,nInputs do
+    local boxes = torch.Tensor()
     local path = pathNames[i]
-    if outdir then
-      processor.currentImage = image.load(path, 3)
-    end
     local bboxes = processor.bboxes[path:find('val') and 1 or 2]
     local index = tonumber(paths.basename(path, 'png'))
     local scale = 1
-    for s=0,processor.processorOpts.windowScales do
+    for s=0,processorOpts.windowScales do
       local start = 1
       while true do
-        if not findSlidingWindows(patches, labels, inputs[i], bboxes[index], scale, start) then break end
+        if not findSlidingWindows(patches, coords, labels, inputs[i], bboxes[index], scale, start) then break end
         local loss, total, stats = processor.testWithLabels(nil, patches, labels)
+        boxes = cat(boxes, cat(coords, stats[1]:view(-1, 1), 2), 1)
         aggLoss = aggLoss + loss
         aggTotal = aggTotal + total
         for l=1,#stats do
-          if not(aggStats[l]) then
-            aggStats[l] = stats[l]:clone()
-          else
-            aggStats[l] = cat({aggStats[l], stats[l]}, 1)
-          end
+          aggStats[l] = cat(aggStats[l], stats[l], 1)
         end
         start = start + labels:size(1)
       end
-      scale = scale * processor.processorOpts.windowDownscaling
+      scale = scale * processorOpts.windowDownscaling
     end
-    if outdir and bboxes[index]:nElement() ~= 0 then
-      for j=1,bboxes[index]:size(1) do
-        local bbox = bboxes[index][j]
-        local XB1 = bbox[1]
-        local XB2 = bbox[1]+bbox[3]
-        local YB1 = bbox[2]
-        local YB2 = bbox[2]+bbox[4]
-        draw.rectangle(processor.currentImage, XB1, YB1, XB2, YB2, 1, {1.0, 1.0, 0})
+
+    if processorOpts.drawBoxes or processorOpts.fullEval then
+      local I = nms(boxes, processorOpts.overlap)
+      boxes = boxes:index(1, I)
+    end
+
+    if processorOpts.drawBoxes then
+      local img = image.load(path, 3)
+      for j=1,boxes:size(1) do
+        local label = maxOverlap(bboxes[index], boxes[j]) >= processorOpts.overlap and 2 or 1
+        local p = boxes[j][5]
+        local t = processorOpts.drawBoxThreshold
+        local color
+        if label == 2 then
+          if p >= t then
+            -- true positive - green
+            local h, s, l = rgbToHsl(0, 1, 0)
+            l = l*(0.1 + (p-t)/(1-t)*0.9)
+            color = {hslToRgb(h, s, l)}
+          else
+            -- false negative - red
+            local h, s, l = rgbToHsl(1, 0, 0)
+            l = l*(1-p)
+            color = {hslToRgb(h, s, l)}
+          end
+        else
+          if p >= t then
+            -- false positive - blue
+            local h, s, l = rgbToHsl(0, 0, 1)
+            l = l*(0.1 + (p-t)/(1-t)*0.9)
+            color = {hslToRgb(h, s, l)}
+          end
+        end
+        if color then
+          draw.rectangle(img, boxes[j][1], boxes[j][2], boxes[j][3], boxes[j][4], 1, color)
+        end
       end
-      image.save(outdir .. paths.basename(path), processor.currentImage)
+      if bboxes[index]:nElement() ~= 0 then
+        -- ground truth - yellow
+        for j=1,bboxes[index]:size(1) do
+          local bbox = bboxes[index][j]
+          local XB1 = bbox[1]
+          local XB2 = bbox[1]+bbox[3]-1
+          local YB1 = bbox[2]
+          local YB2 = bbox[2]+bbox[4]-1
+          draw.rectangle(img, XB1, YB1, XB2, YB2, 1, {1.0, 1.0, 0})
+        end
+      end
+      image.save(processorOpts.drawBoxes .. '/' .. paths.basename(path), img)
+    end
+
+    if processorOpts.fullEval then
+      local mapping = processor.mappings[path:find('val') and 1 or 2]
+      local filename = processorOpts.fullEval .. '/res/' .. mapping[paths.basename(path)]
+      paths.mkdir(paths.dirname(filename))
+      local file, err = io.open(filename, 'w')
+      if not(file) then error(err) end
+      for j=1,boxes:size(1) do
+        file:write(boxes[j][1], ' ',  boxes[j][2], ' ',
+                   boxes[j][3]-boxes[j][1]+1, ' ', boxes[j][4]-boxes[j][2]+1, ' ',
+                   boxes[j][5], '\n')
+      end
+      file:close()
     end
   end
   collectgarbage()

@@ -19,6 +19,7 @@ function M:initializeThreads()
     gpu = 1
     model = self.model
     processor = self
+    processorOpts = self.processorOpts
     mutex = {}
     mutex.lock = function() end
     mutex.unlock = function() end
@@ -51,6 +52,7 @@ function M:initializeThreads()
           gpu = device
           if nGPU > 0 then cutorch.setDevice(device) end
           processor = this
+          processorOpts = this.processorOpts
           if opts.replicateModel then
             if __threadid <= nDevices then
               model = localModel
