@@ -7,17 +7,20 @@ local cmd = torch.CmdLine()
 cmd:argument('-model', 'model to load')
 cmd:argument('-input', 'input file or folder')
 defineBaseOptions(cmd)     --defined in utils.lua
-cmd:option('-cacheEvery', 20, 'save forwarding stats every n batches')
+cmd:option('-noshuffle', false, 'if true then forward in order')
+cmd:option('-cacheEvery', 10, 'save forwarding stats every n batches')
 cmd:option('-resume', '', 'resume forwarding from saved state. Command must be identical')
 processArgs(cmd)
+opts.testing = true
 
 assert(paths.filep(opts.model), 'Cannot find model ' .. opts.model)
 
 local model = Model(opts.model)
 local processor = requirePath(opts.processor).new(model, opts.processorOpts)
 processor:initializeThreads()
+processor:resetStats()
 
-local loader = DataLoader{inputs = opts.input, randomize = true}
+local loader = DataLoader{inputs = opts.input, randomize = not(opts.noshuffle)}
 local state = {shuffle = loader.shuffle, completed = 0}
 if opts.resume ~= '' then
   print("Resuming from cache file: " .. opts.resume)
@@ -41,7 +44,6 @@ local function accResults(loss, cnt, stats)
   end
 end
 
-processor:resetStats()
 loader:runAsync(
   opts.batchSize,
   opts.epochSize,
@@ -50,5 +52,9 @@ loader:runAsync(
   processor.test,
   accResults,
   state.completed + 1) -- startBatch
+if opts.cacheEvery ~= -1 then
+  state.stats = processor.stats
+  torch.save(opts.cacheFile, state)
+end
 print(processor:processStats())
 print()

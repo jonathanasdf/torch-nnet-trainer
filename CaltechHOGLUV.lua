@@ -18,6 +18,9 @@ function M.preprocess(path, isTraining, processorOpts)
       imgs = image.scale(imgs, processorOpts.imageSize, processorOpts.imageSize)
     end
     imgs = Transforms.HorizontalFlip(processorOpts.flip)(imgs)
+  else
+    -- Testing size is 640x480
+    imgs = image.scale(imgs, 640, 480)
   end
   assert(imgs:size(1) == 10)
   return imgs

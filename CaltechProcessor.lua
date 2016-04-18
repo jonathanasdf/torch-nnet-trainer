@@ -9,12 +9,12 @@ local Processor = require 'Processor'
 local M = torch.class('CaltechProcessor', 'Processor')
 
 local function defineSlidingWindowOptions(cmd)
-  cmd:option('-windowSizeX', 41, 'width of sliding window')
-  cmd:option('-windowSizeY', 100, 'height of sliding window')
+  cmd:option('-windowHeight', 200, 'height of sliding window')
+  cmd:option('-windowAspectRatio', 0.41, 'aspect ratio of sliding window')
   cmd:option('-windowStride', 0.3, 'stride of sliding window as fraction of size')
   cmd:option('-windowScales', 2, 'how many times to downscale window (0 = no downscaling)')
   cmd:option('-windowDownscaling', 0.5, 'what percent to downscale window')
-  cmd:option('-posMinBoxSize', 225, 'minimum ground truth box size to be counted as a positive example')
+  cmd:option('-posMinBoxSize', 1025, 'minimum ground truth box size to be counted as a positive example')
 end
 
 function M:__init(model, processorOpts)
@@ -27,8 +27,9 @@ function M:__init(model, processorOpts)
   self.cmd:option('-svm', '', 'SVM to use')
   self.cmd:option('-layer', 'fc7', 'layer to use as SVM input')
   self.cmd:option('-drawBoxes', '', 'set a directory to save images of losses')
-  self.cmd:option('-drawBoxThreshold', 0.95, 'score threshold to count as positive')
-  self.cmd:option('-fullEval', '', 'set a directory to use for full evaluation')
+  self.cmd:option('-drawBoxThreshold', 0.995, 'score threshold to count as positive')
+  self.cmd:option('-drawROC', '', 'set a directory to use for full evaluation')
+  self.cmd:option('-name', 'Result', 'name to use on ROC graph')
   defineSlidingWindowOptions(self.cmd)
   Processor.__init(self, model, processorOpts)
 
@@ -77,28 +78,28 @@ function M:__init(model, processorOpts)
     end
   end
 
-  if self.processorOpts.drawBoxes ~= '' then
-    paths.mkdir(self.processorOpts.drawBoxes)
-  end
-  if self.processorOpts.fullEval ~= '' then
-    if opts.epochSize ~= -1 then
-      error('fullEval requires epochSize == -1')
+  if self.processorOpts.drawROC ~= '' then
+    if not(opts.testing) then
+      error('drawROC can only be used with Forward.lua')
     end
     if not(opts.resume) or opts.resume == '' then
-      if paths.dir(self.processorOpts.fullEval) ~= nil then
-        error('fullEval directory exists! Aborting')
+      if paths.dir(self.processorOpts.drawROC) ~= nil then
+        error('drawROC directory exists! Aborting')
       end
-      paths.mkdir(self.processorOpts.fullEval)
+      paths.mkdir(self.processorOpts.drawROC)
     end
+  end
+  if self.processorOpts.drawBoxes ~= '' then
+    paths.mkdir(self.processorOpts.drawBoxes)
   end
 
   local nPatches = 0
   local scale = 1
   for s=0,self.processorOpts.windowScales do
-    local w = 320
-    local h = 240
-    local sizex = math.ceil(self.processorOpts.windowSizeX * scale)
-    local sizey = math.ceil(self.processorOpts.windowSizeY * scale)
+    local w = 640
+    local h = 480
+    local sizex = math.ceil(self.processorOpts.windowHeight * self.processorOpts.windowAspectRatio * scale)
+    local sizey = math.ceil(self.processorOpts.windowHeight * scale)
     local sx = math.max(1, math.floor(self.processorOpts.windowStride * sizex))
     local sy = math.max(1, math.floor(self.processorOpts.windowStride * sizey))
     nPatches = nPatches + math.ceil((h-sizey+1)/sy)*math.ceil((w-sizex+1)/sx)
@@ -131,6 +132,9 @@ function M.preprocess(path, isTraining, processorOpts)
     end
     img = Transforms.HorizontalFlip(processorOpts.flip)(img)
     img = Transforms.ColorJitter{brightness = 0.4, contrast = 0.4, saturation = 0.4}(img)
+  else
+    -- Testing size is 640x480
+    img = image.scale(img, 640, 480)
   end
 
   if processorOpts.inceptionPreprocessing then
@@ -195,6 +199,26 @@ function M:processStats(phase)
     gnuplot.plot({'pos', x, self.valPosAcc:index(1, x), '+-'}, {'neg', x, self.valNegAcc:index(1, x), '+-'}, {'overall', x, self.valAcc:index(1, x), '-'})
     gnuplot.plotflush()
   end
+
+  if self.processorOpts.drawROC ~= '' then
+     local has = {}
+     for i=1,#opts.input do
+       if opts.input[i]:find('val') then has['val'] = 1 end
+       if opts.input[i]:find('test') then has['test'] = 1 end
+     end
+     local dataName
+     for k,_ in pairs(has) do
+       if not(dataName) then
+         dataName = "{'" .. k .. "'"
+       else
+         dataName = dataName .. ", '" .. k .. "'"
+       end
+     end
+     dataName = dataName .. '}'
+     local cmd = "cd /file/caltech; dbEval('" .. self.processorOpts.drawROC .. "', " .. dataName .. ", '" .. self.processorOpts.name .. "')"
+     print(runMatlab(cmd))
+     print(readAll(self.processorOpts.drawROC .. '/eval/RocReasonable.txt'))
+  end
   return tostring(self.stats)
 end
 
@@ -231,8 +255,8 @@ local function findSlidingWindows(outputPatches, outputCoords, outputLabels, img
   local ceil = math.ceil
 
   local sz = processorOpts.imageSize
-  local sizex = ceil(processorOpts.windowSizeX * scale)
-  local sizey = ceil(processorOpts.windowSizeY * scale)
+  local sizex = ceil(processorOpts.windowHeight * processorOpts.windowAspectRatio * scale)
+  local sizey = ceil(processorOpts.windowHeight * scale)
   local sx = max(1, floor(processorOpts.windowStride * sizex))
   local sy = max(1, floor(processorOpts.windowStride * sizey))
   local w = img:size(3)
@@ -323,7 +347,7 @@ function M.test(pathNames, inputs)
       scale = scale * processorOpts.windowDownscaling
     end
 
-    if processorOpts.drawBoxes ~= '' or processorOpts.fullEval ~= '' then
+    if processorOpts.drawBoxes ~= '' or processorOpts.drawROC ~= '' then
       local I = nms(boxes, processorOpts.overlap)
       boxes = boxes:index(1, I)
     end
@@ -373,9 +397,9 @@ function M.test(pathNames, inputs)
       image.save(processorOpts.drawBoxes .. '/' .. paths.basename(path), img)
     end
 
-    if processorOpts.fullEval ~= '' then
+    if processorOpts.drawROC ~= '' then
       local mapping = _processor.mappings[path:find('val') and 1 or 2]
-      local filename = processorOpts.fullEval .. '/res/' .. mapping[paths.basename(path)]
+      local filename = processorOpts.drawROC .. '/res/' .. mapping[paths.basename(path)]
       paths.mkdir(paths.dirname(filename))
       local file, err = io.open(filename, 'w')
       if not(file) then error(err) end

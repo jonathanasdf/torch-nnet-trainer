@@ -256,6 +256,27 @@ function string:split(sep)
   return fields
 end
 
+function readAll(file)
+    local f = io.open(file, "rb")
+    local content = f:read("*all")
+    f:close()
+    return content
+end
+
+function os.capture(cmd, raw)
+  local f = assert(io.popen(cmd, 'r'))
+  local s = assert(f:read('*a'))
+  f:close()
+  if raw then return s end
+  s = string.gsub(s, '^%s+', '')
+  s = string.gsub(s, '%s+$', '')
+  return s
+end
+
+function runMatlab(cmd)
+  return os.capture('matlab -nodisplay -nosplash -nodesktop -r "try, ' .. cmd .. ', catch ME, disp(getReport(ME)); exit, end, exit" | tail -n +10')
+end
+
 function findModuleByName(model, name)
   if model.modules then
     for i=1,#model.modules do
