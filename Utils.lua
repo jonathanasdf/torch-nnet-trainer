@@ -38,7 +38,8 @@ function processArgs(cmd)
     error('A processor must be supplied.')
   end
 
-  print("Process", require("posix").getpid("pid"), "started!")
+  opts.pid = require("posix").getpid("pid")
+  print("Process", opts.pid, "started!")
 
   if opts.nGPU == -1 then opts.nGPU = 0 end
   if opts.nThreads < opts.nGPU-1 then
@@ -96,8 +97,7 @@ function processArgs(cmd)
     function()
       package.path = package.path .. ';/home/jshen/scripts/?.lua'
       package.path = package.path .. ';/home/nvesdapu/opencv/?.lua'
-    end,
-    function()
+
       torch.setdefaulttensortype('torch.FloatTensor')
       require 'cudnn'
       require 'cunn'
@@ -111,7 +111,8 @@ function processArgs(cmd)
       require 'image'
       require 'optim'
       require 'paths'
-
+    end,
+    function()
       require 'Model'
       require 'Utils'
 
@@ -192,8 +193,8 @@ function tablelength(T)
 end
 
 function cat(T1, T2, dim)
-  if T1:nElement() == 0 then return T2 end
-  if T2:nElement() == 0 then return T1 end
+  if T1:nElement() == 0 then return T2:clone() end
+  if T2:nElement() == 0 then return T1:clone() end
   return torch.cat(T1, T2, dim)
 end
 
@@ -232,6 +233,12 @@ function convertTensorToSVMLight(labels, tensor)
     data[#data+1] = {labels[i], {indices, values}}
   end
   return data
+end
+
+function maskToLongTensor(mask)
+  assert(mask:dim() == 1)
+  local idx = torch.linspace(1, mask:size(1), mask:size(1)):long()
+  return idx[mask:eq(1)]
 end
 
 function string:split(sep)

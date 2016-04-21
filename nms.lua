@@ -1,66 +1,27 @@
-local function nms(boxes, overlap)
-  local pick = torch.LongTensor()
-  if boxes:numel() == 0 then
-    return pick
-  end
+require 'Utils'
+local function nms(boxes, scores, overlap)
+  local keep = {}
 
   local x1 = boxes[{{},1}]
   local y1 = boxes[{{},2}]
   local x2 = boxes[{{},3}]
   local y2 = boxes[{{},4}]
-  local s = boxes[{{},-1}]
+  local area = torch.cmul(x2-x1+1, y2-y1+1)
 
-  local area = boxes.new():resizeAs(s):zero()
-  area:map2(x2,x1,function(xx,xx2,xx1) return xx2-xx1+1 end)
-  area:map2(y2,y1,function(xx,xx2,xx1) return xx*(xx2-xx1+1) end)
+  local _, I = scores:sort()
+  local less = torch.ByteTensor(boxes:size(1)):fill(0)
+  for b=1,boxes:size(1) do
+    local i = I[b]
+    less[i] = 1
 
-  local vals, I = s:sort(1)
-
-  pick:resize(s:size()):zero()
-  local counter = 1
-  local xx1 = boxes.new()
-  local yy1 = boxes.new()
-  local xx2 = boxes.new()
-  local yy2 = boxes.new()
-
-  local w = boxes.new()
-  local h = boxes.new()
-
-  while I:numel()>0 do
-    local last = I:size(1)
-    local i = I[last]
-    pick[counter] = i
-    counter = counter + 1
-    if last == 1 then
-      break
+    local inter = torch.cmax(torch.cmin(x2, x2[i]) - torch.cmax(x1, x1[i]) + 1, 0):cmul(
+                  torch.cmax(torch.cmin(y2, y2[i]) - torch.cmax(y1, y1[i]) + 1, 0))
+    local union = area + area[i] - inter
+    if torch.cmax(less, torch.cdiv(inter, union):lt(overlap):byte()):all() then
+      keep[#keep+1] = i
     end
-    I = I[{{1,last-1}}]
-
-    xx1:index(x1,1,I)
-    xx1:cmax(x1[i])
-    yy1:index(y1,1,I)
-    yy1:cmax(y1[i])
-    xx2:index(x2,1,I)
-    xx2:cmin(x2[i])
-    yy2:index(y2,1,I)
-    yy2:cmin(y2[i])
-
-    w:resizeAs(xx2):zero()
-    w:map2(xx2,xx1,function(xx,xxx2,xxx1) return math.max(xxx2-xxx1+1,0) end)
-    h:resizeAs(yy2):zero()
-    h:map2(yy2,yy1,function(xx,yyy2,yyy1) return math.max(yyy2-yyy1+1,0) end)
-
-    local inter = w
-    inter:cmul(h)
-
-    local o = h
-    xx1:index(area,1,I)
-    torch.cdiv(o,inter,xx1+area[i]-inter)
-    I = I[o:le(overlap)]
   end
-
-  pick = pick[{{1,counter-1}}]
-  return pick
+  return torch.LongTensor(keep)
 end
 
 return nms

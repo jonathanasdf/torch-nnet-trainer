@@ -132,7 +132,7 @@ function M:train(trainFn, valFn)
     if opts.output and opts.output ~= '' then
       self:save(opts.backupdir .. opts.basename .. '.interrupt')
     end
-    os.exit(128 + signum)
+    error('Interrupted!')
   end)
 
   self:zeroGradParameters()
