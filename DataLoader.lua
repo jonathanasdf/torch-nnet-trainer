@@ -184,7 +184,7 @@ function DataLoader.loadInputs(pathNames, preprocessFn, workerFn)
   for i=1,first:dim() do
     size[i+1] = first:size(i)
   end
-  local inputs = torch.Tensor(size)
+  local inputs = first.new(size)
   inputs[1] = first
   for i=2,#pathNames do
     inputs[i] = preprocessFn(pathNames[i])

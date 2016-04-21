@@ -14,7 +14,7 @@ local function defineSlidingWindowOptions(cmd)
   cmd:option('-windowHeight', 200, 'height of sliding window')
   cmd:option('-windowAspectRatio', 0.41, 'aspect ratio of sliding window')
   cmd:option('-windowStride', 0.3, 'stride of sliding window as fraction of size')
-  cmd:option('-windowScales', 2, 'how many times to downscale window (0 = no downscaling)')
+  cmd:option('-windowScales', 3, 'number of sliding window scales (1 = no downscaling)')
   cmd:option('-windowDownscaling', 0.5, 'downscaling factor')
   cmd:option('-posMinBoxSize', 1025, 'minimum ground truth box size to be counted as a positive example')
 end
@@ -95,31 +95,34 @@ function M:__init(model, processorOpts)
     paths.mkdir(self.processorOpts.drawBoxes)
   end
 
-  local slidingWindows = {}
+  self.slidingWindows = {}
+  self.nWindows = 0
   local w = self.processorOpts.testImageWidth
   local h = self.processorOpts.testImageHeight
   local scale = 1
-  for s=0,self.processorOpts.windowScales do
+  for s=1,self.processorOpts.windowScales do
     local sizex = math.ceil(self.processorOpts.windowHeight * self.processorOpts.windowAspectRatio * scale)
     local sizey = math.ceil(self.processorOpts.windowHeight * scale)
-    local sx = math.max(1, math.floor(self.processorOpts.windowStride * sizex))
-    local sy = math.max(1, math.floor(self.processorOpts.windowStride * sizey))
+    local stridex = math.max(1, math.floor(self.processorOpts.windowStride * sizex))
+    local stridey = math.max(1, math.floor(self.processorOpts.windowStride * sizey))
     assert(w >= sizex)
     assert(h >= sizey)
-    for j=1,h-sizey+1,sy do
-      for k=1,w-sizex+1,sx do
-        slidingWindows[#slidingWindows+1] = torch.Tensor{k, j, k+sizex-1, j+sizey-1}:view(1, 4)
+
+    local nWindows = math.ceil((w-sizex+1)/stridex)*math.ceil((h-sizey+1)/stridey)
+    self.nWindows = self.nWindows + nWindows
+
+    self.slidingWindows[s] = torch.Tensor(nWindows, 4)
+    local n = 1
+    for j=1,h-sizey+1,stridey do
+      for k=1,w-sizex+1,stridex do
+        self.slidingWindows[s][n] = torch.Tensor{k, j, k+sizex-1, j+sizey-1}:view(1, 4)
+        n = n + 1
       end
     end
+
     scale = scale * self.processorOpts.windowDownscaling
   end
-  self.nWindows = #slidingWindows
   print('Windows per image:', self.nWindows)
-
-  self.slidingWindows = torch.Tensor(self.nWindows, 4)
-  for i=1,self.nWindows do
-    self.slidingWindows[i] = slidingWindows[i]
-  end
 
   local w = self.processorOpts.negativesWeight
   local weights = torch.Tensor{w/(1+w), 1/(1+w)} * 2
@@ -140,19 +143,11 @@ end
 
 function M.preprocess(path, isTraining, processorOpts)
   local img = image.load(path, 3)
-  local w, h
   if isTraining then
-    w = processorOpts.imageSize
-    h = processorOpts.imageSize
-  else
-    w = processorOpts.testImageWidth
-    h = processorOpts.testImageHeight
-  end
-  if img:size(2) ~= h or img:size(3) ~= w then
-    img = image.scale(img, w, h)
-  end
-
-  if isTraining then
+    local sz = processorOpts.imageSize
+    if img:size(2) ~= sz or img:size(3) ~= sz then
+      img = image.scale(img, sz, sz)
+    end
     img = Transforms.HorizontalFlip(processorOpts.flip)(img)
     img = Transforms.ColorJitter{brightness = 0.4, contrast = 0.4, saturation = 0.4}(img)
   end
@@ -278,6 +273,7 @@ function M.forward(inputs, deterministic)
 end
 
 function M.test(pathNames, inputs)
+  local ceil = math.ceil
   local min = math.min
   local aggLoss = 0
   local aggTotal = 0
@@ -296,22 +292,36 @@ function M.test(pathNames, inputs)
     local sz = processorOpts.imageSize
     local index = tonumber(paths.basename(path, 'png'))
     local bboxes = _processor.bboxes[path:find('val') and 1 or 2][index]
-    for j=1,_processor.nWindows,opts.batchSize do
-      local count = min(j+opts.batchSize-1, _processor.nWindows) - j + 1
-      patches:resize(count, c, sz, sz)
-      labels:resize(count)
-      for k=1,count do
-        local window = _processor.slidingWindows[j+k-1]
-        patches[k] = image.scale(inputs[i][{{}, {window[2], window[4]}, {window[1], window[3]}}], sz, sz):cuda()
-        labels[k] = maxOverlap(bboxes, window) >= processorOpts.overlap and 2 or 1
+
+    local scale = 1
+    for s=1,processorOpts.windowScales do
+      local windows = _processor.slidingWindows[s]
+      local nWindows = windows:size(1)
+      local sizex = ceil(processorOpts.windowHeight * processorOpts.windowAspectRatio * scale)
+      local sizey = ceil(processorOpts.windowHeight * scale)
+      local sx = sz / sizex
+      local sy = sz / sizey
+      local input = image.scale(inputs[i], sx*processorOpts.testImageWidth, sy*processorOpts.testImageHeight)
+      for j=1,nWindows,opts.batchSize do
+        local count = min(j+opts.batchSize-1, nWindows) - j + 1
+        patches:resize(count, c, sz, sz)
+        labels:resize(count)
+        for k=1,count do
+          local window = windows[j+k-1]
+          local l = (window[1]-1)*sx+1
+          local t = (window[2]-1)*sy+1
+          patches[k] = input[{{}, {t, t+sz-1}, {l, l+sz-1}}]:cuda()
+          labels[k] = maxOverlap(bboxes, window) >= processorOpts.overlap and 2 or 1
+        end
+        local loss, total, stats = _processor.testWithLabels(path, patches, labels)
+        boxes = cat(boxes, cat(windows[{{j,j+count-1}}], stats[1]:view(-1, 1), 2), 1)
+        aggLoss = aggLoss + loss
+        aggTotal = aggTotal + total
+        for l=1,#stats do
+          aggStats[l] = cat(aggStats[l], stats[l], 1)
+        end
       end
-      local loss, total, stats = _processor.testWithLabels(path, patches, labels)
-      boxes = cat(boxes, cat(_processor.slidingWindows[{{j,j+count-1}}], stats[1]:view(-1, 1), 2), 1)
-      aggLoss = aggLoss + loss
-      aggTotal = aggTotal + total
-      for l=1,#stats do
-        aggStats[l] = cat(aggStats[l], stats[l], 1)
-      end
+      scale = scale * processorOpts.windowDownscaling
     end
 
     if processorOpts.drawBoxes ~= '' or processorOpts.drawROC ~= '' then
