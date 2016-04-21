@@ -16,10 +16,10 @@ cmd:argument('-input', 'input file or folder')
 cmd:argument('-output', 'path to save trained student model')
 defineBaseOptions(cmd)     --defined in utils.lua
 defineTrainingOptions(cmd) --defined in train.lua
-cmd:option('-teacherProcessor', '', 'alternate processor for teacher model')
+cmd:option('-teacherProcessor', '', 'alternate processor for teacher model. Only the preprocess function is used')
 cmd:option('-teacherProcessorOpts', '', 'alternate processor options for teacher model')
-cmd:option('-matchLayer', 2, 'which layers to match outputs, counting from the end. Defaults to second last layer')
-cmd:option('-useMSE', false, 'Use mean squared error instead of soft cross entropy')
+cmd:option('-matchLayer', 2, 'which layers to match outputs, counting from the end. Defaults to second last layer (i.e. input to SoftMax layer)')
+cmd:option('-useMSE', false, 'use mean squared error instead of soft cross entropy')
 cmd:option('-T', 2, 'temperature for soft cross entropy')
 cmd:option('-lambda', 0.5, 'hard target relative weight')
 processArgs(cmd)
@@ -36,11 +36,7 @@ end
 local teacher = Model(opts.teacher)
 local teacherProcessor
 if opts.teacherProcessor ~= '' then
-  local processorOpts = opts.processorOpts
-  if opts.teacherProcessorOpts ~= '' then
-    processorOpts = opts.teacherProcessorOpts
-  end
-  teacherProcessor = requirePath(opts.teacherProcessor).new(teacher, processorOpts)
+  teacherProcessor = requirePath(opts.teacherProcessor).new(teacher, opts.teacherProcessorOpts)
 end
 
 local student = Model(opts.student)
@@ -80,6 +76,9 @@ else
       threads:addjob(i,
         function()
           require 'SoftCrossEntropyCriterion'
+          if opts.teacherProcessor ~= '' then
+            requirePath(opts.teacherProcessor)
+          end
         end
       )
       threads:addjob(i,

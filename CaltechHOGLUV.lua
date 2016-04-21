@@ -16,7 +16,7 @@ function M.preprocess(path, isTraining, processorOpts)
     w = processorOpts.testImageWidth
     h = processorOpts.testImageHeight
   end
-  local imgs = torch.Tensor(10, w, h)
+  local imgs = torch.Tensor(10, h, w)
   for i=11,20 do
     local img = image.load(dir .. tostring(i) .. name, 1)
     if img:size(2) ~= h or img:size(3) ~= w then

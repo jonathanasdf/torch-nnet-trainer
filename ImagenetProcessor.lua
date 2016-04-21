@@ -4,10 +4,10 @@ local Processor = require 'Processor'
 local M = torch.class('ImageNetProcessor', 'Processor')
 
 function M:__init(model, processorOpts)
-  self.cmd:option('-resize', 256, 'What size to crop to.')
-  self.cmd:option('-cropSize', 224, 'What size to crop to.')
-  self.cmd:option('-inceptionPreprocessing', false, 'Preprocess for inception models (RGB, [-1, 1))')
-  self.cmd:option('-caffePreprocessing', false, 'Preprocess for caffe models (BGR, [0, 255])')
+  self.cmd:option('-resize', 256, 'what size to resize to before cropping')
+  self.cmd:option('-cropSize', 224, 'what size to crop')
+  self.cmd:option('-inceptionPreprocessing', false, 'preprocess for inception models (RGB, [-1, 1))')
+  self.cmd:option('-caffePreprocessing', false, 'preprocess for caffe models (BGR, [0, 255])')
   Processor.__init(self, model, processorOpts)
   assert(self.processorOpts.cropSize <= self.processorOpts.resize)
 

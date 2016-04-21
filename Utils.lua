@@ -9,7 +9,7 @@ function defineBaseOptions(cmd)
   cmd:option('-epochSize', -1, 'num batches per epochs. -1 means run all available data once')
   cmd:option('-dropout', 0.5, 'dropout probability')
   cmd:option('-nThreads', 4, 'number of worker threads')
-  cmd:option('-replicateModel', false, 'Replicate model across threads? Speeds up everything, but takes more memory')
+  cmd:option('-replicateModel', false, 'Replicate model across threads')
   cmd:option('-nGPU', 1, 'number of GPU to use. Set to -1 to use CPU')
 end
 
@@ -29,6 +29,8 @@ function defineTrainingOptions(cmd)
 end
 
 function processArgs(cmd)
+  print("Process", require("posix").getpid("pid"), "started!")
+
   torch.setdefaulttensortype('torch.FloatTensor')
   opts = cmd:parse(arg or {})
   if opts.nGPU == 0 then
