@@ -29,13 +29,17 @@ function defineTrainingOptions(cmd)
 end
 
 function processArgs(cmd)
-  print("Process", require("posix").getpid("pid"), "started!")
-
   torch.setdefaulttensortype('torch.FloatTensor')
   opts = cmd:parse(arg or {})
   if opts.nGPU == 0 then
     error('nGPU should not be 0. Please set nGPU to -1 if you want to use CPU.')
   end
+  if opts.processor == '' then
+    error('A processor must be supplied.')
+  end
+
+  print("Process", require("posix").getpid("pid"), "started!")
+
   if opts.nGPU == -1 then opts.nGPU = 0 end
   if opts.nThreads < opts.nGPU-1 then
     if opts.nThreads == 0 then
@@ -87,50 +91,49 @@ function processArgs(cmd)
     gnuplot.grid(true)
   end
 
-  if opts.processor == '' then
-    error('A processor must be supplied.')
-  end
+  local opt = opts
+  local setup = {
+    function()
+      package.path = package.path .. ';/home/jshen/scripts/?.lua'
+      package.path = package.path .. ';/home/nvesdapu/opencv/?.lua'
+    end,
+    function()
+      torch.setdefaulttensortype('torch.FloatTensor')
+      require 'cudnn'
+      require 'cunn'
+      cv = require 'cv'
+      require 'cv.cudawarping'
+      require 'cv.imgcodecs'
+      require 'dpnn'
+      require 'draw'
+      require 'fbnn'
+      require 'gnuplot'
+      require 'image'
+      require 'optim'
+      require 'paths'
+
+      require 'Model'
+      require 'Utils'
+
+      min = math.min
+      max = math.max
+      floor = math.floor
+      ceil = math.ceil
+    end,
+    function()
+      cudnn.benchmark = true
+      opts = opt
+      nGPU = opts.nGPU
+      nThreads = opts.nThreads
+      requirePath(opts.processor)
+    end
+  }
+
   if opts.nThreads > 0 then
-    local opt = opts
     torch.setnumthreads(opts.nThreads)
     local Threads = require 'threads'
     Threads.serialization('threads.sharedserialize')
-    threads = Threads(opts.nThreads,
-      function()
-        package.path = package.path .. ';/home/jshen/scripts/?.lua'
-        package.path = package.path .. ';/home/nvesdapu/opencv/?.lua'
-      end,
-      function()
-        torch.setdefaulttensortype('torch.FloatTensor')
-        require 'cudnn'
-        require 'cunn'
-        cv = require 'cv'
-        require 'cv.cudawarping'
-        require 'cv.imgcodecs'
-        require 'dpnn'
-        require 'draw'
-        require 'fbnn'
-        require 'gnuplot'
-        require 'image'
-        require 'optim'
-        require 'paths'
-
-        require 'Model'
-        require 'Utils'
-
-        local min = math.min
-        local max = math.max
-        local floor = math.floor
-        local ceil = math.ceil
-      end,
-      function()
-        cudnn.benchmark = true
-        opts = opt
-        nGPU = opts.nGPU
-        nThreads = opts.nThreads
-        requirePath(opts.processor)
-      end
-    )
+    threads = Threads(opts.nThreads, unpack(setup))
   else
     threads = {}
     threads.addjob = function(self, f1, f2, ...)
@@ -138,16 +141,22 @@ function processArgs(cmd)
       if f2 then f2(unpack(r)) end
     end
     threads.synchronize = function() end
+    for i=1,#setup do
+      setup[i]()
+    end
   end
 end
 
 function augmentThreadState(...)
+  local funcs = {...}
   if nThreads == 0 then
+    for j=1,#funcs do
+      funcs[j]()
+    end
     return
   end
   local specific = threads:specific()
   threads:specific(true)
-  local funcs = {...}
   for j=1,#funcs do
     for i=1,nThreads do
       threads:addjob(i, funcs[j])

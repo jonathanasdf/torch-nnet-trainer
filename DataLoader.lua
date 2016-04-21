@@ -48,9 +48,6 @@ local initcheck = require 'argcheck'{
 
 local DataLoader = torch.class('DataLoader')
 
-local min = math.min
-local ceil = math.ceil
-
 function DataLoader:__init(...)
   local args = initcheck(...)
   for k,v in pairs(args) do self[k] = v end
@@ -149,7 +146,7 @@ function DataLoader:sample(quantity)
     for i=1,#self.inputs do
       local count = i < #self.inputs and self.weights[i] * quantity or quantity - #indices
       for j=1,count do
-        indices[#indices+1] = index + ceil(torch.uniform() * self:size(i))
+        indices[#indices+1] = index + math.ceil(torch.uniform() * self:size(i))
       end
       index = index + self:size(i)
     end
@@ -161,7 +158,7 @@ function DataLoader:get(start, endIncl)
   local indices
   if type(start) == 'number' then
     if type(endIncl) == 'number' then -- range of indices
-      endIncl = min(endIncl, self:size())
+      endIncl = math.min(endIncl, self:size())
       indices = torch.range(start, endIncl)
     else -- single index
       indices = {start}
@@ -202,9 +199,9 @@ function DataLoader:runAsync(batchSize, epochSize, randomSample, preprocessFn, w
   end
 
   if epochSize == -1 then
-    epochSize = ceil(self:size() * 1.0 / batchSize)
+    epochSize = math.ceil(self:size() * 1.0 / batchSize)
   end
-  epochSize = min(epochSize, ceil(self:size() * 1.0 / batchSize))
+  epochSize = math.min(epochSize, math.ceil(self:size() * 1.0 / batchSize))
 
   startBatch = startBatch or 1
   if startBatch > epochSize then return end
@@ -212,7 +209,7 @@ function DataLoader:runAsync(batchSize, epochSize, randomSample, preprocessFn, w
 
   local indexStart = (startBatch-1) * batchSize + 1
   for i=startBatch,epochSize do
-    local indexEnd = min(indexStart + batchSize - 1, self:size())
+    local indexEnd = math.min(indexStart + batchSize - 1, self:size())
     local pathNames = randomSample and self:sample(batchSize) or self:get(indexStart, indexEnd)
     threads:addjob(self.loadInputs, resultHandler, pathNames, preprocessFn, workerFn)
     indexStart = indexEnd + 1

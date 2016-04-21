@@ -1,8 +1,4 @@
-require 'draw'
 require 'fbnn'
-local nms = require 'nms'
-require 'optim'
-require 'svm'
 
 local Transforms = require 'Transforms'
 local Processor = require 'Processor'
@@ -129,7 +125,6 @@ function M:__init(model, processorOpts)
   self.criterion = nn.TrueNLLCriterion(weights)
   self.criterion.sizeAverage = false
   if nGPU > 0 then
-    require 'cutorch'
     self.criterion = self.criterion:cuda()
   end
 end
@@ -238,8 +233,6 @@ function M:processStats(phase)
 end
 
 local function maxOverlap(bboxes, coords)
-  local min = math.min
-  local max = math.max
   local m = 0
   if bboxes:nElement() ~= 0 then
     local SA = (coords[3]-coords[1]+1)*(coords[4]-coords[2]+1)
@@ -273,17 +266,9 @@ function M.forward(inputs, deterministic)
 end
 
 function M.test(pathNames, inputs)
-  local ceil = math.ceil
-  local min = math.min
   local aggLoss = 0
   local aggTotal = 0
   local aggStats = {torch.Tensor(), torch.Tensor()}
-  local patches = torch.Tensor()
-  local labels = torch.Tensor()
-  if nGPU > 0 then
-    patches = patches:cuda()
-    labels = labels:cuda()
-  end
   local boxes = torch.Tensor()
   local nInputs = #pathNames
   for i=1,nInputs do
@@ -295,6 +280,7 @@ function M.test(pathNames, inputs)
 
     local scale = 1
     for s=1,processorOpts.windowScales do
+      collectgarbage()
       local windows = _processor.slidingWindows[s]
       local nWindows = windows:size(1)
       local sizex = ceil(processorOpts.windowHeight * processorOpts.windowAspectRatio * scale)
@@ -304,14 +290,18 @@ function M.test(pathNames, inputs)
       local input = image.scale(inputs[i], sx*processorOpts.testImageWidth, sy*processorOpts.testImageHeight)
       for j=1,nWindows,opts.batchSize do
         local count = min(j+opts.batchSize-1, nWindows) - j + 1
-        patches:resize(count, c, sz, sz)
-        labels:resize(count)
+        local patches = torch.Tensor(count, c, sz, sz)
+        local labels = torch.Tensor(count)
         for k=1,count do
           local window = windows[j+k-1]
           local l = (window[1]-1)*sx+1
           local t = (window[2]-1)*sy+1
-          patches[k] = input[{{}, {t, t+sz-1}, {l, l+sz-1}}]:cuda()
+          patches[k] = input[{{}, {t, t+sz-1}, {l, l+sz-1}}]
           labels[k] = maxOverlap(bboxes, window) >= processorOpts.overlap and 2 or 1
+        end
+        if nGPU > 0 then
+          patches = patches:cuda()
+          labels = labels:cuda()
         end
         local loss, total, stats = _processor.testWithLabels(path, patches, labels)
         boxes = cat(boxes, cat(windows[{{j,j+count-1}}], stats[1]:view(-1, 1), 2), 1)
@@ -325,6 +315,7 @@ function M.test(pathNames, inputs)
     end
 
     if processorOpts.drawBoxes ~= '' or processorOpts.drawROC ~= '' then
+      local nms = require 'nms'
       local I = nms(boxes, processorOpts.overlap)
       boxes = boxes:index(1, I)
     end
@@ -388,7 +379,6 @@ function M.test(pathNames, inputs)
       file:close()
     end
   end
-  collectgarbage()
   return aggLoss, aggTotal, aggStats
 end
 
