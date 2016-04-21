@@ -25,7 +25,7 @@ function M:__init(model, processorOpts)
   self.cmd:option('-svm', '', 'SVM to use')
   self.cmd:option('-layer', 'fc7', 'layer to use as SVM input')
   self.cmd:option('-drawBoxes', '', 'set a directory to save images of losses')
-  self.cmd:option('-drawBoxThreshold', 0.995, 'score threshold to count as positive')
+  self.cmd:option('-drawBoxesThreshold', 0.995, 'score threshold to count as positive')
   self.cmd:option('-drawROC', '', 'set a directory to use for full evaluation')
   self.cmd:option('-name', 'Result', 'name to use on ROC graph')
   defineSlidingWindowOptions(self.cmd)
@@ -111,7 +111,7 @@ function M:__init(model, processorOpts)
     local n = 1
     for j=1,h-sizey+1,stridey do
       for k=1,w-sizex+1,stridex do
-        self.slidingWindows[s][n] = torch.Tensor{k, j, k+sizex-1, j+sizey-1}:view(1, 4)
+        self.slidingWindows[s][n] = torch.Tensor{k, j, sizex, sizey}:view(1, 4)
         n = n + 1
       end
     end
@@ -322,10 +322,12 @@ function M.test(pathNames, inputs)
 
     if processorOpts.drawBoxes ~= '' then
       local img = image.load(path, 3)
+      image.scale(img, processorOpts.testImageWidth, processorOpts.testImageHeight)
       for j=1,boxes:size(1) do
-        local label = maxOverlap(bboxes, boxes[j]) >= processorOpts.overlap and 2 or 1
-        local p = boxes[j][5]
-        local t = processorOpts.drawBoxThreshold
+        local bbox = boxes[j]
+        local label = maxOverlap(bboxes, bbox) >= processorOpts.overlap and 2 or 1
+        local p = bbox[5]
+        local t = processorOpts.drawBoxesThreshold
         local color
         if label == 2 then
           if p >= t then
@@ -348,18 +350,14 @@ function M.test(pathNames, inputs)
           end
         end
         if color then
-          draw.rectangle(img, boxes[j][1], boxes[j][2], boxes[j][3], boxes[j][4], 1, color)
+          draw.rectangle(img, bbox[1], bbox[2], bbox[1]+bbox[3]-1, bbox[2]+bbox[4]-1, 1, color)
         end
       end
       if bboxes:nElement() ~= 0 then
         -- ground truth - yellow
         for j=1,bboxes:size(1) do
           local bbox = bboxes[j]
-          local XB1 = bbox[1]
-          local XB2 = bbox[1]+bbox[3]-1
-          local YB1 = bbox[2]
-          local YB2 = bbox[2]+bbox[4]-1
-          draw.rectangle(img, XB1, YB1, XB2, YB2, 1, {1.0, 1.0, 0})
+          draw.rectangle(img, bbox[1], bbox[2], bbox[1]+bbox[3]-1, bbox[2]+bbox[4]-1, 1, {1, 1, 0})
         end
       end
       image.save(processorOpts.drawBoxes .. '/' .. paths.basename(path), img)
@@ -372,9 +370,7 @@ function M.test(pathNames, inputs)
       local file, err = io.open(filename, 'w')
       if not(file) then error(err) end
       for j=1,boxes:size(1) do
-        file:write(boxes[j][1], ' ',  boxes[j][2], ' ',
-                   boxes[j][3]-boxes[j][1]+1, ' ', boxes[j][4]-boxes[j][2]+1, ' ',
-                   boxes[j][5], '\n')
+        file:write(boxes[j][1], ' ',  boxes[j][2], ' ', boxes[j][3], ' ', boxes[j][4], ' ', boxes[j][5], '\n')
       end
       file:close()
     end
