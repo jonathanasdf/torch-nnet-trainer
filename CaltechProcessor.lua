@@ -95,7 +95,7 @@ function M:__init(model, processorOpts)
     paths.mkdir(self.processorOpts.drawBoxes)
   end
 
-  self.slidingWindows = {}
+  local slidingWindows = {}
   local w = self.processorOpts.testImageWidth
   local h = self.processorOpts.testImageHeight
   local scale = 1
@@ -108,14 +108,18 @@ function M:__init(model, processorOpts)
     assert(h >= sizey)
     for j=1,h-sizey+1,sy do
       for k=1,w-sizex+1,sx do
-        self.slidingWindows[#self.slidingWindows+1] = torch.Tensor{k, j, k+sizex-1, j+sizey-1}:view(1, 4)
+        slidingWindows[#slidingWindows+1] = torch.Tensor{k, j, k+sizex-1, j+sizey-1}:view(1, 4)
       end
     end
     scale = scale * self.processorOpts.windowDownscaling
   end
-  self.slidingWindows = cat(self.slidingWindows, 1)
-  self.nWindows = self.slidingWindows:size(1)
+  self.nWindows = #slidingWindows
   print('Windows per image:', self.nWindows)
+
+  self.slidingWindows = torch.Tensor(self.nWindows, 4)
+  for i=1,self.nWindows do
+    self.slidingWindows[i] = slidingWindows[i]
+  end
 
   local w = self.processorOpts.negativesWeight
   local weights = torch.Tensor{w/(1+w), 1/(1+w)} * 2
@@ -136,14 +140,21 @@ end
 
 function M.preprocess(path, isTraining, processorOpts)
   local img = image.load(path, 3)
+  local w, h
   if isTraining then
-    if img:size(2) ~= processorOpts.imageSize or img:size(3) ~= processorOpts.imageSize then
-      img = image.scale(img, processorOpts.imageSize, processorOpts.imageSize)
-    end
+    w = processorOpts.imageSize
+    h = processorOpts.imageSize
+  else
+    w = processorOpts.testImageWidth
+    h = processorOpts.testImageHeight
+  end
+  if img:size(2) ~= h or img:size(3) ~= w then
+    img = image.scale(img, w, h)
+  end
+
+  if isTraining then
     img = Transforms.HorizontalFlip(processorOpts.flip)(img)
     img = Transforms.ColorJitter{brightness = 0.4, contrast = 0.4, saturation = 0.4}(img)
-  else
-    img = image.scale(img, processorOpts.testImageWidth, processorOpts.testImageHeight)
   end
 
   if processorOpts.inceptionPreprocessing then

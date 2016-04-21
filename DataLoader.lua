@@ -178,11 +178,17 @@ end
 
 function DataLoader.loadInputs(pathNames, preprocessFn, workerFn)
   collectgarbage()
-  local inputs = {}
-  for j=1,#pathNames do
-    inputs[#inputs+1] = preprocessFn(pathNames[j])
+  local first = preprocessFn(pathNames[1])
+  local size = torch.LongStorage(first:dim() + 1)
+  size[1] = #pathNames
+  for i=1,first:dim() do
+    size[i+1] = first:size(i)
   end
-  inputs = tableToBatchTensor(inputs)
+  local inputs = torch.Tensor(size)
+  inputs[1] = first
+  for i=2,#pathNames do
+    inputs[i] = preprocessFn(pathNames[i])
+  end
   if workerFn then
     return workerFn(pathNames, inputs)
   else

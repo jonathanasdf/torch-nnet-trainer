@@ -8,21 +8,25 @@ end
 
 function M.preprocess(path, isTraining, processorOpts)
   local dir, name = path:match("(.*)base(.*)")
-  local imgs = {}
-  for i=11,20 do
-    imgs[i-10] = image.load(dir .. tostring(i) .. name, 1)
-  end
-  imgs = cat(imgs, 1)
+  local w,h
   if isTraining then
-    if imgs:size(2) ~= processorOpts.imageSize or imgs:size(3) ~= processorOpts.imageSize then
-      imgs = image.scale(imgs, processorOpts.imageSize, processorOpts.imageSize)
-    end
-    imgs = Transforms.HorizontalFlip(processorOpts.flip)(imgs)
+    w = processorOpts.imageSize
+    h = processorOpts.imageSize
   else
-    -- Testing size is 640x480
-    imgs = image.scale(imgs, 640, 480)
+    w = processorOpts.testImageWidth
+    h = processorOpts.testImageHeight
   end
-  assert(imgs:size(1) == 10)
+  local imgs = torch.Tensor(10, w, h)
+  for i=11,20 do
+    local img = image.load(dir .. tostring(i) .. name, 1)
+    if img:size(2) ~= h or img:size(3) ~= w then
+      img = image.scale(img, w, h)
+    end
+    imgs[i-10] = img
+  end
+  if isTraining then
+    imgs = Transforms.HorizontalFlip(processorOpts.flip)(imgs)
+  end
   return imgs
 end
 

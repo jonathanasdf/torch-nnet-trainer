@@ -181,34 +181,9 @@ function tablelength(T)
 end
 
 function cat(T1, T2, dim)
-  local out
-  if dim then
-    if T1:nElement() == 0 then
-      out = T2
-    elseif T2:nElement() == 0 then
-      out = T1
-    else
-      out = torch.Tensor():typeAs(T1)
-      torch.cat(out, T1, T2, dim)
-    end
-  else
-    for i=#T1,1,-1 do
-      if T1[i]:nElement() == 0 then
-        table.remove(T1, i)
-      end
-    end
-    out = torch.Tensor():typeAs(T1[1])
-    torch.cat(out, T1, T2)
-  end
-  return out
-end
-
--- Concatenates a table of tensors **of the same size** along a new dimension at the front
-function tableToBatchTensor(T)
-  for i=1,#T do
-    T[i] = nn.utils.addSingletonDimension(T[i])
-  end
-  return cat(T, 1)
+  if T1:nElement() == 0 then return T2 end
+  if T2:nElement() == 0 then return T1 end
+  return torch.cat(T1, T2, dim)
 end
 
 local RGBBGR = torch.LongTensor{3,2,1}
