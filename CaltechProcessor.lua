@@ -181,6 +181,10 @@ function M.preprocess(path, isTraining, processorOpts)
   return img
 end
 
+function M.preprocessWindows(windows)
+  return windows
+end
+
 function M.getLabels(pathNames)
   local labels = torch.Tensor(#pathNames)
   if nGPU > 0 then labels = labels:cuda() end
@@ -193,7 +197,7 @@ end
 function M.calcStats(pathNames, outputs, labels)
   local pred
   if processorOpts.svm == '' then
-    pred = outputs[{{},2}]
+    pred = outputs[{{},2}]:clone()
   else
     if not(processorOpts.svmmodel) then
       processorOpts.svmmodel = torch.load(processorOpts.svm)
@@ -201,7 +205,7 @@ function M.calcStats(pathNames, outputs, labels)
     local data = convertTensorToSVMLight(labels, outputs)
     pred = liblinear.predict(data, processorOpts.svmmodel, '-q')
   end
-  return {pred:float(), labels}
+  return {pred, labels}
 end
 
 function M:resetStats()
@@ -305,10 +309,10 @@ function M.test(pathNames, inputs)
     local index = tonumber(paths.basename(path, 'png'))
     local bboxes = _processor.bboxes[path:find('val') and 1 or 2][index]
     local labels = maxOverlap(bboxes, _processor.slidingWindows):ge(processorOpts.overlap) + 1
-    local patches = torch.Tensor()
+    local inputPatches = torch.Tensor()
     if nGPU > 0 then
       labels = labels:cuda()
-      patches = patches:cuda()
+      inputPatches = inputPatches:cuda()
     end
     local scores = torch.Tensor()
 
@@ -325,16 +329,28 @@ function M.test(pathNames, inputs)
       local nWindows = _processor.slidingWindowScaleOffsets[s+1] - start
       for j=1,nWindows,opts.batchSize do
         local count = min(j+opts.batchSize-1, nWindows) - j + 1
-        if patches:dim() == 0 or count ~= patches:size(1) then
-          patches:resize(count, c, sz, sz)
-        end
+        local patches = torch.Tensor(count, c, sz, sz)
         for k=1,count do
           local window = _processor.slidingWindows[start+j+k-1]
           local x = min(ceil((window[1]-1)*sx+1), input:size(3)-sz+1)
           local y = min(ceil((window[2]-1)*sy+1), input:size(2)-sz+1)
           patches[k] = input[{{}, {y, y+sz-1}, {x, x+sz-1}}]
         end
-        local loss, total, stats = _processor.testWithLabels(path, patches, labels[{{start+j, start+j+count-1}}])
+        patches = _processor.preprocessWindows(patches)
+        local same = inputPatches:dim() == patches:dim()
+        if same then
+          for l=1,patches:dim() do
+            if inputPatches:size(l) ~= patches:size(l) then
+              same = false
+              break
+            end
+          end
+        end
+        if not(same) then
+          inputPatches:resize(patches:size())
+        end
+        inputPatches:copy(patches)
+        local loss, total, stats = _processor.testWithLabels(path, inputPatches, labels[{{start+j, start+j+count-1}}])
         scores = cat(scores, stats[1], 1)
         aggLoss = aggLoss + loss
         aggTotal = aggTotal + total

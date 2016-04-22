@@ -96,7 +96,7 @@ function processArgs(cmd)
   local setup = {
     function()
       package.path = package.path .. ';/home/jshen/scripts/?.lua'
-      package.path = package.path .. ';/home/nvesdapu/opencv/?.lua'
+      package.path = package.path .. ';/home/nvesdapu/scripts/?.lua'
 
       torch.setdefaulttensortype('torch.FloatTensor')
       require 'cudnn'
@@ -113,6 +113,7 @@ function processArgs(cmd)
       require 'paths'
     end,
     function()
+      require 'features'
       require 'Model'
       require 'Utils'
 

@@ -129,10 +129,11 @@ function M:train(trainFn, valFn)
 
   local signal = require("posix.signal")
   signal.signal(signal.SIGINT, function(signum)
+    print("Interrupt!")
     if opts.output and opts.output ~= '' then
       self:save(opts.backupdir .. opts.basename .. '.interrupt')
     end
-    error('Interrupted!')
+    os.exit(-1)
   end)
 
   self:zeroGradParameters()
@@ -194,6 +195,9 @@ function M:train(trainFn, valFn)
     if opts.cacheEvery ~= -1 and epoch % opts.cacheEvery == 0 and
        opts.output and opts.output ~= '' then
       self:save(opts.backupdir .. opts.basename .. '.cached')
+      augmentThreadState(function()
+        _model:clearState()
+      end)
     end
   end
 
@@ -204,9 +208,6 @@ end
 
 function M:save(filename)
   self:clearState()
-  augmentThreadState(function()
-    _model:clearState()
-  end)
   torch.save(filename, self.model)
   opts.optimState.dfdx = nil
   torch.save(filename .. '.optimState', opts.optimState)
