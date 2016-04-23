@@ -1,35 +1,35 @@
-cv = require 'cv'
-require 'cv.cudawarping'
-require 'cv.imgcodecs'
-require 'draw'
 require 'fbnn'
-matio = require 'matio'
-require 'optim'
-require 'svm'
 
+local Transforms = require 'Transforms'
 local Processor = require 'Processor'
 local M = torch.class('CaltechProcessor', 'Processor')
 
 local function defineSlidingWindowOptions(cmd)
-  cmd:option('-windowSizeX', 30, 'width of sliding window')
-  cmd:option('-windowSizeY', 50, 'height of sliding window')
-  cmd:option('-windowStrideX', 0.5, 'horizontal stride of sliding window as fraction of width')
-  cmd:option('-windowStrideY', 0.5, 'vertical stride of sliding window as fraction of height')
-  cmd:option('-windowScales', 2, 'how many times to downscale window (0 = no downscaling)')
-  cmd:option('-windowDownscaling', 0.75, 'what percent to downscale window')
-  cmd:option('-windowIOU', 0.5, 'what IOU to count as a positive example')
+  cmd:option('-testImageWidth', 640, 'width of input test image')
+  cmd:option('-testImageHeight', 480, 'height of input test image')
+  cmd:option('-windowHeight', 200, 'height of sliding window')
+  cmd:option('-windowAspectRatio', 0.41, 'aspect ratio of sliding window')
+  cmd:option('-windowStride', 0.3, 'stride of sliding window as fraction of size')
+  cmd:option('-windowScales', 3, 'number of sliding window scales (1 = no downscaling)')
+  cmd:option('-windowDownscaling', 0.5, 'downscaling factor')
+  cmd:option('-posMinHeight', 50, 'minimum ground truth box height to be counted as a positive example')
 end
 
-function M:__init()
-  self.cmd:option('-imageSize', 113, 'What to resize to.')
-  self.cmd:option('-inceptionPreprocessing', false, 'Preprocess for inception models (RGB, [-1, 1))')
-  self.cmd:option('-caffePreprocessing', false, 'Preprocess for caffe models (BGR, [0, 255])')
-  self.cmd:option('-negativesWeight', 1, 'Relative weight of negative examples')
+function M:__init(model, processorOpts)
+  self.cmd:option('-imageSize', 113, 'input patch size')
+  self.cmd:option('-inceptionPreprocessing', false, 'preprocess for inception models (RGB, [-1, 1))')
+  self.cmd:option('-caffePreprocessing', false, 'preprocess for caffe models (BGR, [0, 255])')
+  self.cmd:option('-flip', 0.5, 'probability to do horizontal flip (for training)')
+  self.cmd:option('-overlap', 0.5, 'what IOU to count as a positive example, and for NMS')
+  self.cmd:option('-negativesWeight', 1, 'relative weight of negative examples')
   self.cmd:option('-svm', '', 'SVM to use')
   self.cmd:option('-layer', 'fc7', 'layer to use as SVM input')
   self.cmd:option('-drawBoxes', '', 'set a directory to save images of losses')
+  self.cmd:option('-drawBoxesThreshold', 0.995, 'score threshold to count as positive')
+  self.cmd:option('-drawROC', '', 'set a directory to use for full evaluation')
+  self.cmd:option('-name', 'Result', 'name to use on ROC graph')
   defineSlidingWindowOptions(self.cmd)
-  Processor.__init(self)
+  Processor.__init(self, model, processorOpts)
 
   if self.processorOpts.inceptionPreprocessing then
     -- no mean normalization
@@ -40,12 +40,83 @@ function M:__init()
     self.processorOpts.std = torch.Tensor{0.229, 0.224, 0.225}:view(3, 1, 1)
   end
 
+  local w = self.processorOpts.negativesWeight
+  local weights = torch.Tensor{w/(1+w), 1/(1+w)} * 2
+  self.criterion = nn.TrueNLLCriterion(weights, false)
+  if nGPU > 0 then
+    self.criterion = self.criterion:cuda()
+  end
+
+  local matio = require 'matio'
   self.bboxes = {
     matio.load('/file/caltech/val/box.mat', 'box'),
     matio.load('/file/caltech/test/box.mat', 'box')
   }
+  for i=1,#self.bboxes do
+    for j=1,#self.bboxes[i] do
+      local bboxes = self.bboxes[i][j]
+      if bboxes:nElement() > 0 then
+        local keep = maskToLongTensor(bboxes[{{}, 4}]:ge(self.processorOpts.posMinHeight))
+        if keep:nElement() == 0 then
+          self.bboxes[i][j] = self.bboxes[i][j].new()
+        else
+          self.bboxes[i][j] = bboxes:index(1, keep)
+          bboxes = self.bboxes[i][j]
+          bboxes[{{}, 3}] = bboxes[{{}, 1}] + bboxes[{{}, 3}] - 1
+          bboxes[{{}, 4}] = bboxes[{{}, 2}] + bboxes[{{}, 4}] - 1
+        end
+      end
+    end
+  end
 
-  if opts.logdir then
+  local slidingWindows = {}
+  local nWindows = 0
+  local w = self.processorOpts.testImageWidth
+  local h = self.processorOpts.testImageHeight
+  local scale = 1
+  for s=1,self.processorOpts.windowScales do
+    local sizex = math.ceil(self.processorOpts.windowHeight * self.processorOpts.windowAspectRatio * scale)
+    local sizey = math.ceil(self.processorOpts.windowHeight * scale)
+    local stridex = math.max(1, math.floor(self.processorOpts.windowStride * sizex))
+    local stridey = math.max(1, math.floor(self.processorOpts.windowStride * sizey))
+    assert(w >= sizex)
+    assert(h >= sizey)
+
+    local windows = {}
+    for j=1,h-sizey+1,stridey do
+      for k=1,w-sizex+1,stridex do
+        windows[#windows+1] = torch.Tensor{k, j, k+sizex-1, j+sizey-1}:view(1, 4)
+      end
+    end
+    slidingWindows[s] = windows
+    nWindows = nWindows + #windows
+    scale = scale * self.processorOpts.windowDownscaling
+  end
+  print('Windows per image:', nWindows)
+  assert(nWindows > 0)
+  self.slidingWindows = torch.Tensor(nWindows, 4)
+  self.slidingWindowScaleOffsets = {}
+  local n = 0
+  for i=1,self.processorOpts.windowScales do
+    self.slidingWindowScaleOffsets[i] = n
+    for j=1,#slidingWindows[i] do
+      self.slidingWindows[n+j] = slidingWindows[i][j]
+    end
+    n = n + #slidingWindows[i]
+  end
+  self.slidingWindowScaleOffsets[self.processorOpts.windowScales+1] = n
+
+  self.mappings = {{}, {}}
+  for line in io.lines('/file/caltech/val/mapping.txt') do
+    local s = line:split()
+    self.mappings[1][s[1]] = s[2]
+  end
+  for line in io.lines('/file/caltech/test/mapping.txt') do
+    local s = line:split()
+    self.mappings[2][s[1]] = s[2]
+  end
+
+  if opts.logdir and opts.epochs then
     self.trainGraph = gnuplot.pngfigure(opts.logdir .. 'train.png')
     gnuplot.xlabel('epoch')
     gnuplot.ylabel('acc')
@@ -65,27 +136,37 @@ function M:__init()
     end
   end
 
-  local w = self.processorOpts.negativesWeight
-  local weights = torch.Tensor{w/(1+w), 1/(1+w)} * 2
-  self.criterion = nn.TrueNLLCriterion(weights)
-  self.criterion.sizeAverage = false
-  if nGPU > 0 then
-    require 'cutorch'
-    self.criterion = self.criterion:cuda()
+  if self.processorOpts.drawROC ~= '' then
+    if not(opts.testing) then
+      error('drawROC can only be used with Forward.lua')
+    end
+    if not(opts.resume) or opts.resume == '' then
+      if paths.dir(self.processorOpts.drawROC) ~= nil then
+        error('drawROC directory exists! Aborting')
+      end
+      paths.mkdir(self.processorOpts.drawROC)
+    end
+  end
+  if self.processorOpts.drawBoxes ~= '' then
+    paths.mkdir(self.processorOpts.drawBoxes)
   end
 end
 
 function M:initializeThreads()
+  Processor.initializeThreads(self)
   augmentThreadState(function()
     require 'svm'
   end)
-  Processor.initializeThreads(self)
 end
 
 function M.preprocess(path, isTraining, processorOpts)
   local img = image.load(path, 3)
-  if isTraining and (img:size(2) ~= processorOpts.imageSize or img:size(3) ~= processorOpts.imageSize) then
-    img = image.scale(img, processorOpts.imageSize, processorOpts.imageSize)
+  if isTraining then
+    local sz = processorOpts.imageSize
+    if img:size(2) ~= sz or img:size(3) ~= sz then
+      img = image.scale(img, sz, sz)
+    end
+    img = Transforms.HorizontalFlip(processorOpts.flip)(img)
   end
 
   if processorOpts.inceptionPreprocessing then
@@ -96,6 +177,10 @@ function M.preprocess(path, isTraining, processorOpts)
     img = img:csub(processorOpts.meanPixel:expandAs(img)):cdiv(processorOpts.std:expandAs(img))
   end
   return img
+end
+
+function M.preprocessWindows(windows)
+  return windows
 end
 
 function M.getLabels(pathNames)
@@ -109,33 +194,14 @@ end
 
 function M.calcStats(pathNames, outputs, labels)
   local pred
-  if processor.processorOpts.svm == '' then
-    _, pred = torch.max(outputs, 2)
+  if processorOpts.svm == '' then
+    pred = outputs[{{},2}]:clone()
   else
-    if not(processor.processorOpts.svmmodel) then
-      processor.processorOpts.svmmodel = torch.load(processor.processorOpts.svm)
+    if not(processorOpts.svmmodel) then
+      processorOpts.svmmodel = torch.load(processorOpts.svm)
     end
     local data = convertTensorToSVMLight(labels, outputs)
-    pred = liblinear.predict(data, processor.processorOpts.svmmodel, '-q')
-  end
-  pred = pred:view(-1)
-
-  for i=1,labels:size(1) do
-    local color
-    if labels[i] == 2 then
-      if pred[i] == 2 then
-        color = {0, 1.0, 0} -- green - true positive
-      else
-        color = {1.0, 0, 0} -- red - false negative
-      end
-    else
-      if pred[i] == 2 then
-        color = {0, 0, 1.0} -- blue - false positive
-      end
-    end
-    if processor.processorOpts.drawBoxes ~= '' and color then
-      draw.rectangle(processor.currentImage, processor.windowX[i], processor.windowY[i], processor.windowX[i] + processor.windowSizeX - 1, processor.windowY[i] + processor.windowSizeY - 1, 1, color)
-    end
+    pred = liblinear.predict(data, processorOpts.svmmodel, '-q')
   end
   return {pred, labels}
 end
@@ -145,7 +211,7 @@ function M:resetStats()
 end
 
 function M:accStats(new_stats)
-  self.stats:batchAdd(new_stats[1], new_stats[2])
+  self.stats:batchAdd(new_stats[1]:ge(0.5) + 1, new_stats[2])
 end
 
 function M:processStats(phase)
@@ -169,169 +235,194 @@ function M:processStats(phase)
     gnuplot.plot({'pos', x, self.valPosAcc:index(1, x), '+-'}, {'neg', x, self.valNegAcc:index(1, x), '+-'}, {'overall', x, self.valAcc:index(1, x), '-'})
     gnuplot.plotflush()
   end
+
+  if self.processorOpts.drawROC ~= '' then
+     local has = {}
+     for i=1,#opts.input do
+       if opts.input[i]:find('val') then has['val'] = 1 end
+       if opts.input[i]:find('test') then has['test'] = 1 end
+     end
+     local dataName
+     for k,_ in pairs(has) do
+       if not(dataName) then
+         dataName = "{'" .. k .. "'"
+       else
+         dataName = dataName .. ", '" .. k .. "'"
+       end
+     end
+     dataName = dataName .. '}'
+     local cmd = "cd /file/caltech; dbEval('" .. self.processorOpts.drawROC .. "', " .. dataName .. ", '" .. self.processorOpts.name .. "')"
+     print(runMatlab(cmd))
+     print(readAll(self.processorOpts.drawROC .. '/eval/RocReasonable.txt'))
+  end
   return tostring(self.stats)
 end
 
-local function findSlidingWindows(outputPatches, outputLabels, img, bboxes, scale, start)
-  local min = math.min
-  local max = math.max
-  local floor = math.floor
-  local ceil = math.ceil
-
-  local sz = processor.processorOpts.imageSize
-  local sizex = ceil(processor.processorOpts.windowSizeX * scale)
-  processor.windowSizeX = sizex
-  local sizey = ceil(processor.processorOpts.windowSizeY * scale)
-  processor.windowSizeY = sizey
-  local sx = max(1, floor(processor.processorOpts.windowStrideX * sizex))
-  local sy = max(1, floor(processor.processorOpts.windowStrideY * sizey))
-  local h = img:size(2)
-  local w = img:size(3)
-  local c = img:size(1)
-  local nPatches = ceil((h-sizey+1)/sy)*ceil((w-sizex+1)/sx)
-  if start > nPatches then
-    return false
-  end
-  local finish = min(start + opts.batchSize - 1, nPatches)
-  local count = finish - start + 1
-
-  outputPatches:resize(count, c, sz, sz)
-  outputLabels:resize(count):fill(1)
-
-  if img.getDevice then
-    img = img:permute(2, 3, 1)
+local function maxOverlap(bboxes, boxes)
+  local out = boxes.new(boxes:size(1)):fill(0)
+  if bboxes:nElement() == 0 then
+    return out
   end
 
-  local id = 0
-  local cnt = 0
-  local nCols = 0
-  processor.windowX = {}
-  processor.windowY = {}
-  for j=1,h-sizey+1,sy do
-    for k=1,w-sizex+1,sx do
-      id = id + 1
-      if j == 1 then nCols = nCols + 1 end
-      if id >= start and id <= finish then
-        cnt = cnt + 1
-        if img.getDevice then
-          assert(c == 3)
-          local window = img[{{j, j+sizey-1}, {k, k+sizex-1}}]:contiguous()
-          outputPatches[cnt] = cv.cuda.resize{window, {sz, sz}}:permute(3, 1, 2)
-        else
-          outputPatches[cnt] = image.scale(img[{{}, {j, j+sizey-1}, {k, k+sizex-1}}], sz, sz):cuda()
-        end
-        processor.windowX[cnt] = k
-        processor.windowY[cnt] = j
-      end
-    end
+  local XA1 = boxes[{{}, 1}]
+  local YA1 = boxes[{{}, 2}]
+  local XA2 = boxes[{{}, 3}]
+  local YA2 = boxes[{{}, 4}]
+  local SA = torch.cmul(XA2-XA1+1, YA2-YA1+1)
+
+  for i=1,bboxes:size(1) do
+    local XB1 = bboxes[i][1]
+    local YB1 = bboxes[i][2]
+    local XB2 = bboxes[i][3]
+    local YB2 = bboxes[i][4]
+    local SB = (XB2-XB1+1)*(YB2-YB1+1)
+    local SI = torch.cmax(torch.cmin(XA2, XB2) - torch.cmax(XA1, XB1) + 1, 0):cmul(
+               torch.cmax(torch.cmin(YA2, YB2) - torch.cmax(YA1, YB1) + 1, 0))
+    local SU = SA + SB - SI
+    out:cmax(SI:cdiv(SU))
   end
-
-  if bboxes:nElement() ~= 0 then
-    local SA = sizex*sizey
-    for i=1,bboxes:size(1) do
-      local XB1 = bboxes[i][1]
-      local XB2 = bboxes[i][1]+bboxes[i][3]
-      local YB1 = bboxes[i][2]
-      local YB2 = bboxes[i][2]+bboxes[i][4]
-      local SB = bboxes[i][3]*bboxes[i][4]
-
-      local left = max(0, ceil((XB1-sizex)/sx))
-      local right = floor(XB2/sx)
-      local top = max(0, ceil((YB1-sizey)/sy))
-      local bottom = floor(YB2/sy)
-      for j=top,bottom do
-        for k=left,right do
-          id = j*nCols+k+1
-          if id >= start and id <= finish then
-            local XA1 = k*sx
-            local XA2 = k*sx+sizex
-            local YA1 = j*sy
-            local YA2 = j*sy+sizey
-
-            local SI = max(0, min(XA2, XB2) - max(XA1, XB1)) *
-                       max(0, min(YA2, YB2) - max(YA1, YB1))
-            local SU = SA + SB - SI
-            if SI/SU > processor.processorOpts.windowIOU then
-              outputLabels[id-start+1] = 2
-            end
-          end
-        end
-      end
-    end
-  end
-  return true
+  return out
 end
 
 function M.forward(inputs, deterministic)
-  local outputs
-  if not(deterministic) then
-    outputs = model:forward(inputs)
-  else
-    outputs = model:forward(inputs, true)
+  local outputs = _model:forward(inputs, deterministic)
+  if processorOpts.svm ~= '' then
+    outputs = findModuleByName(_model, processorOpts.layer).output
   end
-  if processor.processorOpts.svm ~= '' then
-    outputs = findModuleByName(model, processor.processorOpts.layer).output
-  end
-  outputs = outputs:view(inputs:size(1), -1)
   return outputs
 end
 
 function M.test(pathNames, inputs)
-  local min = math.min
   local aggLoss = 0
   local aggTotal = 0
-  local aggStats = {}
-  local patches = torch.Tensor()
-  local labels = torch.Tensor()
-  if nGPU > 0 then
-    patches = patches:cuda()
-    labels = labels:cuda()
-  end
-  local outdir
-  if processor.processorOpts.drawBoxes ~= '' then
-    outdir = processor.processorOpts.drawBoxes .. '/'
-    paths.mkdir(outdir)
-  end
+  local aggStats = {torch.Tensor(), torch.Tensor()}
   local nInputs = #pathNames
   for i=1,nInputs do
     local path = pathNames[i]
-    if outdir then
-      processor.currentImage = image.load(path, 3)
-    end
-    local bboxes = processor.bboxes[path:find('val') and 1 or 2]
+    local c = inputs[i]:size(1)
+    local w = processorOpts.testImageWidth
+    local h = processorOpts.testImageHeight
+    local sz = processorOpts.imageSize
     local index = tonumber(paths.basename(path, 'png'))
+    local bboxes = _processor.bboxes[path:find('val') and 1 or 2][index]
+    local labels = maxOverlap(bboxes, _processor.slidingWindows):ge(processorOpts.overlap) + 1
+    local inputPatches = torch.Tensor()
+    if nGPU > 0 then
+      labels = labels:cuda()
+      inputPatches = inputPatches:cuda()
+    end
+    local scores = torch.Tensor()
+
     local scale = 1
-    for s=0,processor.processorOpts.windowScales do
-      local start = 1
-      while true do
-        if not findSlidingWindows(patches, labels, inputs[i], bboxes[index], scale, start) then break end
-        local loss, total, stats = processor.testWithLabels(nil, patches, labels)
+    for s=1,processorOpts.windowScales do
+      collectgarbage()
+      local sizex = ceil(processorOpts.windowHeight * processorOpts.windowAspectRatio * scale)
+      local sizey = ceil(processorOpts.windowHeight * scale)
+      local sx = sz / sizex
+      local sy = sz / sizey
+      local input = image.scale(inputs[i], ceil(sx*w), ceil(sy*h))
+
+      local start = _processor.slidingWindowScaleOffsets[s]
+      local nWindows = _processor.slidingWindowScaleOffsets[s+1] - start
+      for j=1,nWindows,opts.batchSize do
+        local count = min(j+opts.batchSize-1, nWindows) - j + 1
+        local patches = torch.Tensor(count, c, sz, sz)
+        for k=1,count do
+          local window = _processor.slidingWindows[start+j+k-1]
+          local x = min(ceil((window[1]-1)*sx+1), input:size(3)-sz+1)
+          local y = min(ceil((window[2]-1)*sy+1), input:size(2)-sz+1)
+          patches[k] = input[{{}, {y, y+sz-1}, {x, x+sz-1}}]
+        end
+        patches = _processor.preprocessWindows(patches)
+        local same = inputPatches:dim() == patches:dim()
+        if same then
+          for l=1,patches:dim() do
+            if inputPatches:size(l) ~= patches:size(l) then
+              same = false
+              break
+            end
+          end
+        end
+        if not(same) then
+          inputPatches:resize(patches:size())
+        end
+        inputPatches:copy(patches)
+        local loss, total, stats = _processor.testWithLabels(path, inputPatches, labels[{{start+j, start+j+count-1}}])
+        scores = cat(scores, stats[1], 1)
         aggLoss = aggLoss + loss
         aggTotal = aggTotal + total
         for l=1,#stats do
-          if not(aggStats[l]) then
-            aggStats[l] = stats[l]
+          aggStats[l] = cat(aggStats[l], stats[l], 1)
+        end
+      end
+      scale = scale * processorOpts.windowDownscaling
+    end
+
+    local boxes = _processor.slidingWindows
+    if processorOpts.drawBoxes ~= '' or processorOpts.drawROC ~= '' then
+      local nms = require 'nms'
+      local I = nms(boxes, scores, processorOpts.overlap)
+      boxes = boxes:index(1, I)
+      labels = labels:index(1, I)
+      scores = scores:index(1, I)
+    end
+
+    if processorOpts.drawBoxes ~= '' then
+      local img = image.load(path, 3)
+      img = image.scale(img, w, h)
+      for j=1,boxes:size(1) do
+        local bbox = boxes[j]
+        local p = scores[j]
+        local t = processorOpts.drawBoxesThreshold
+        local color
+        if labels[j] == 2 then
+          if p >= t then
+            -- true positive - green
+            local h, s = rgbToHsl(0, 1, 0)
+            local l = 0.3 + (1-(p-t)/(1-t))*0.4
+            color = {hslToRgb(h, s, l)}
           else
-            aggStats[l] = cat({aggStats[l], stats[l]}, 1)
+            -- false negative - red
+            local h, s = rgbToHsl(1, 0, 0)
+            local l = 0.3 + p/t*0.4
+            color = {hslToRgb(h, s, l)}
+          end
+        else
+          if p >= t then
+            -- false positive - blue
+            local h, s = rgbToHsl(0, 0, 1)
+            local l = 0.3 + (1-(p-t)/(1-t))*0.4
+            color = {hslToRgb(h, s, l)}
           end
         end
-        start = start + labels:size(1)
+        if color then
+          draw.rectangle(img, bbox[1], bbox[2], bbox[3], bbox[4], 1, color)
+        end
       end
-      scale = scale * processor.processorOpts.windowDownscaling
+      if bboxes:nElement() ~= 0 then
+        -- ground truth - yellow
+        for j=1,bboxes:size(1) do
+          local bbox = bboxes[j]
+          if bbox[4]-bbox[2]+1 >= processorOpts.posMinHeight then
+            draw.rectangle(img, bbox[1], bbox[2], bbox[3], bbox[4], 1, {1, 1, 0})
+          end
+        end
+      end
+      image.save(processorOpts.drawBoxes .. '/' .. paths.basename(path), img)
     end
-    if outdir and bboxes[index]:nElement() ~= 0 then
-      for j=1,bboxes[index]:size(1) do
-        local bbox = bboxes[index][j]
-        local XB1 = bbox[1]
-        local XB2 = bbox[1]+bbox[3]
-        local YB1 = bbox[2]
-        local YB2 = bbox[2]+bbox[4]
-        draw.rectangle(processor.currentImage, XB1, YB1, XB2, YB2, 1, {1.0, 1.0, 0})
+
+    if processorOpts.drawROC ~= '' then
+      local mapping = _processor.mappings[path:find('val') and 1 or 2]
+      local filename = processorOpts.drawROC .. '/res/' .. mapping[paths.basename(path)]
+      paths.mkdir(paths.dirname(filename))
+      local file, err = io.open(filename, 'w')
+      if not(file) then error(err) end
+      for j=1,boxes:size(1) do
+        file:write(boxes[j][1], ' ',  boxes[j][2], ' ', boxes[j][3]-boxes[j][1]+1, ' ', boxes[j][4]-boxes[j][2]+1, ' ', scores[j], '\n')
       end
-      image.save(outdir .. paths.basename(path), processor.currentImage)
+      file:close()
     end
   end
-  collectgarbage()
   return aggLoss, aggTotal, aggStats
 end
 

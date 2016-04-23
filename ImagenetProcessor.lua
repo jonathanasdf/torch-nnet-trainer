@@ -1,16 +1,14 @@
-cv = require 'cv'
-require 'cv.cudawarping'
-require 'cv.imgcodecs'
 require 'fbnn'
+local Transforms = require 'Transforms'
 local Processor = require 'Processor'
 local M = torch.class('ImageNetProcessor', 'Processor')
 
-function M:__init()
-  self.cmd:option('-resize', 256, 'What size to crop to.')
-  self.cmd:option('-cropSize', 224, 'What size to crop to.')
-  self.cmd:option('-inceptionPreprocessing', false, 'Preprocess for inception models (RGB, [-1, 1))')
-  self.cmd:option('-caffePreprocessing', false, 'Preprocess for caffe models (BGR, [0, 255])')
-  Processor.__init(self)
+function M:__init(model, processorOpts)
+  self.cmd:option('-resize', 256, 'what size to resize to before cropping')
+  self.cmd:option('-cropSize', 224, 'what size to crop')
+  self.cmd:option('-inceptionPreprocessing', false, 'preprocess for inception models (RGB, [-1, 1))')
+  self.cmd:option('-caffePreprocessing', false, 'preprocess for caffe models (BGR, [0, 255])')
+  Processor.__init(self, model, processorOpts)
   assert(self.processorOpts.cropSize <= self.processorOpts.resize)
 
   local synset = '/file/imagenet/ILSVRC2012_devkit_t12/words.txt'
@@ -55,8 +53,7 @@ function M:__init()
     end
   end
 
-  self.criterion = nn.TrueNLLCriterion()
-  self.criterion.sizeAverage = false
+  self.criterion = nn.TrueNLLCriterion(nil, false)
   if nGPU > 0 then
     require 'cutorch'
     self.criterion = self.criterion:cuda()
@@ -65,17 +62,8 @@ end
 
 function M.preprocess(path, isTraining, processorOpts)
   local img = image.load(path, 3)
-
-  -- find the smaller dimension, and resize it to processorOpts.resize
-  local sz = processorOpts.resize
-  if img:size(3) < img:size(2) then
-    img = image.scale(img, sz, sz * img:size(2) / img:size(3))
-  else
-    img = image.scale(img, sz * img:size(3) / img:size(2), sz)
-  end
-
-  sz = processorOpts.cropSize
-  img = image.crop(img, 'c', sz, sz)
+  img = Transforms.Scale(processorOpts.resize)(img)
+  img = Transforms.CenterCrop(processorOpts.cropSize)(img)
 
   if processorOpts.inceptionPreprocessing then
     img = (img * 255 - 128) / 128
@@ -98,10 +86,10 @@ function M.getLabels(pathNames)
     local name = pathNames[i]
     local filename = paths.basename(name)
     if name:find('train') then
-      labels[i] = processor.lookup[string.sub(filename, 1, 9)]
+      labels[i] = _processor.lookup[string.sub(filename, 1, 9)]
     else
       assert(name:find('val'))
-      labels[i] = processor.val[tonumber(string.sub(filename, -12, -5))]
+      labels[i] = _processor.val[tonumber(string.sub(filename, -12, -5))]
     end
   end
   return labels
@@ -120,10 +108,10 @@ function M.calcStats(pathNames, outputs, labels)
         top5 = top5 + 1
         color = '\27[33m'
       end
-      result = result .. color .. '(' .. math.floor(prob[j]*100 + 0.5) .. '%) ' .. processor.words[classes[j]] .. '\27[0m; '
+      result = result .. color .. '(' .. math.floor(prob[j]*100 + 0.5) .. '%) ' .. _processor.words[classes[j]] .. '\27[0m; '
     end
     if labels[i] ~= -1 then
-      result = result .. '\27[36mground truth: ' .. processor.words[labels[i]] .. '\27[0m'
+      result = result .. '\27[36mground truth: ' .. _processor.words[labels[i]] .. '\27[0m'
     end
     --print(result)
   end

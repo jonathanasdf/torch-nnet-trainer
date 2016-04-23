@@ -16,7 +16,7 @@ processArgs(cmd)
 assert(paths.filep(opts.model), 'Cannot find model ' .. opts.model)
 
 local model = Model(opts.model)
-opts.processor.model = model
-opts.processor:initializeThreads()
+local processor = requirePath(opts.processor).new(model, opts.processorOpts)
+processor:initializeThreads()
 model:train()
 print("Done!\n")

@@ -7,13 +7,16 @@ function defineBaseOptions(cmd)
   cmd:option('-processorOpts', '', 'additional options for the processor')
   cmd:option('-batchSize', 32, 'batch size')
   cmd:option('-epochSize', -1, 'num batches per epochs. -1 means run all available data once')
+  cmd:option('-dropout', 0.5, 'dropout probability')
   cmd:option('-nThreads', 4, 'number of worker threads')
-  cmd:option('-replicateModel', false, 'Replicate model across threads? Speeds up everything, but takes more memory')
   cmd:option('-nGPU', 1, 'number of GPU to use. Set to -1 to use CPU')
 end
 
 function defineTrainingOptions(cmd)
   cmd:option('-LR', 0.001, 'learning rate')
+  cmd:option('-LRDecay', 0, 'learning rate decay')
+  cmd:option('-LRDropEvery', -1, 'reduce learning rate every n epochs')
+  cmd:option('-LRDropFactor', 10, 'factor to reduce learning rate')
   cmd:option('-momentum', 0.9, 'momentum')
   cmd:option('-weightDecay', 0.0005, 'weight decay')
   cmd:option('-inputWeights', '', 'comma separated weights to balance input classes for each batch')
@@ -33,6 +36,13 @@ function processArgs(cmd)
   if opts.nGPU == 0 then
     error('nGPU should not be 0. Please set nGPU to -1 if you want to use CPU.')
   end
+  if opts.processor == '' then
+    error('A processor must be supplied.')
+  end
+
+  opts.pid = require("posix").getpid("pid")
+  print("Process", opts.pid, "started!")
+
   if opts.nGPU == -1 then opts.nGPU = 0 end
   if opts.nThreads < opts.nGPU-1 then
     if opts.nThreads == 0 then
@@ -43,14 +53,20 @@ function processArgs(cmd)
       print('Not enough threads to use all gpus. Increasing nThreads to ' .. opts.nThreads)
     end
   end
+
+  if opts.nThreads > 1 then
+    error('There is currently a bug with nThreads > 1.')
+  end
+
+  nGPU = opts.nGPU
+  nThreads = opts.nThreads
+
+
   if opts.val and opts.val ~= '' then
     if opts.valBatchSize == -1 then
       opts.valBatchSize = opts.batchSize
     end
   end
-
-  nGPU = opts.nGPU
-  nThreads = opts.nThreads
 
   if not opts.updateEvery then opts.updateEvery = 1 end
   opts.batchCount = opts.batchSize * opts.updateEvery
@@ -82,55 +98,54 @@ function processArgs(cmd)
     gnuplot.xlabel('epoch')
     gnuplot.ylabel('loss')
     gnuplot.grid(true)
+  else
+    logprint = function() end
   end
 
-  if opts.processor == '' then
-    error('A processor must be supplied.')
-  end
-  local processorPath = opts.processor
-  opts.processor = requirePath(opts.processor).new()
+  local opt = opts
+  local setup = {
+    function()
+      package.path = package.path .. ';/home/jshen/scripts/?.lua'
+      package.path = package.path .. ';/home/nvesdapu/scripts/?.lua'
+
+      torch.setdefaulttensortype('torch.FloatTensor')
+      require 'cudnn'
+      require 'cunn'
+      cv = require 'cv'
+      require 'cv.cudawarping'
+      require 'cv.imgcodecs'
+      require 'dpnn'
+      require 'draw'
+      require 'fbnn'
+      require 'gnuplot'
+      require 'image'
+      require 'optim'
+      require 'paths'
+    end,
+    function()
+      require 'features'
+      require 'Model'
+      require 'Utils'
+
+      min = math.min
+      max = math.max
+      floor = math.floor
+      ceil = math.ceil
+    end,
+    function()
+      cudnn.benchmark = true
+      opts = opt
+      nGPU = opts.nGPU
+      nThreads = opts.nThreads
+      requirePath(opts.processor)
+    end
+  }
 
   if opts.nThreads > 0 then
-    local opt = opts
     torch.setnumthreads(opts.nThreads)
     local Threads = require 'threads'
     Threads.serialization('threads.sharedserialize')
-    threads = Threads(opts.nThreads,
-      function()
-        package.path = package.path .. ';/home/jshen/scripts/?.lua'
-        package.path = package.path .. ';/home/nvesdapu/opencv/?.lua'
-      end,
-      function()
-        torch.setdefaulttensortype('torch.FloatTensor')
-        require 'cudnn'
-        require 'cunn'
-        cv = require 'cv'
-        require 'cv.cudawarping'
-        require 'cv.imgcodecs'
-        require 'dpnn'
-        require 'draw'
-        require 'fbnn'
-        require 'gnuplot'
-        require 'image'
-        require 'optim'
-        require 'paths'
-
-        require 'Model'
-        require 'Utils'
-        requirePath(processorPath)
-
-        local min = math.min
-        local max = math.max
-        local floor = math.floor
-        local ceil = math.ceil
-      end,
-      function()
-        cudnn.benchmark = true
-        opts = opt
-        nGPU = opts.nGPU
-        nThreads = opts.nThreads
-      end
-    )
+    threads = Threads(opts.nThreads, unpack(setup))
   else
     threads = {}
     threads.addjob = function(self, f1, f2, ...)
@@ -138,16 +153,22 @@ function processArgs(cmd)
       if f2 then f2(unpack(r)) end
     end
     threads.synchronize = function() end
+    for i=1,#setup do
+      setup[i]()
+    end
   end
 end
 
 function augmentThreadState(...)
+  local funcs = {...}
   if nThreads == 0 then
+    for j=1,#funcs do
+      funcs[j]()
+    end
     return
   end
   local specific = threads:specific()
   threads:specific(true)
-  local funcs = {...}
   for j=1,#funcs do
     for i=1,nThreads do
       threads:addjob(i, funcs[j])
@@ -182,18 +203,10 @@ function tablelength(T)
   return count
 end
 
-function cat(T, dim)
-  local out = torch.Tensor():typeAs(T[1])
-  torch.cat(out, T, dim)
-  return out
-end
-
--- Concatenates a table of tensors **of the same size** along a new dimension at the front
-function tableToBatchTensor(T)
-  for i=1,#T do
-    T[i] = nn.utils.addSingletonDimension(T[i])
-  end
-  return cat(T, 1)
+function cat(T1, T2, dim)
+  if T1:nElement() == 0 then return T2:clone() end
+  if T2:nElement() == 0 then return T1:clone() end
+  return torch.cat(T1, T2, dim)
 end
 
 local RGBBGR = torch.LongTensor{3,2,1}
@@ -233,6 +246,12 @@ function convertTensorToSVMLight(labels, tensor)
   return data
 end
 
+function maskToLongTensor(mask)
+  assert(mask:dim() == 1)
+  local idx = torch.linspace(1, mask:size(1), mask:size(1)):long()
+  return idx[mask:eq(1)]
+end
+
 function string:split(sep)
   sep = sep or ','
   local fields = {}
@@ -241,10 +260,28 @@ function string:split(sep)
   return fields
 end
 
+function readAll(file)
+    local f = io.open(file, "rb")
+    local content = f:read("*all")
+    f:close()
+    return content
+end
+
+function os.capture(cmd, raw)
+  local f = assert(io.popen(cmd, 'r'))
+  local s = assert(f:read('*a'))
+  f:close()
+  if raw then return s end
+  s = string.gsub(s, '^%s+', '')
+  s = string.gsub(s, '%s+$', '')
+  return s
+end
+
+function runMatlab(cmd)
+  return os.capture('matlab -nodisplay -nosplash -nodesktop -r "try, ' .. cmd .. ', catch ME, disp(getReport(ME)); exit, end, exit" | tail -n +10')
+end
+
 function findModuleByName(model, name)
-  if torch.isTypeOf(model, 'Model') then
-    return findModuleByName(model.model, name)
-  end
   if model.modules then
     for i=1,#model.modules do
       local recur = findModuleByName(model.modules[i], name)
@@ -255,6 +292,16 @@ function findModuleByName(model, name)
     end
   end
   return nil
+end
+
+function setDropout(model, p)
+  if torch.isTypeOf(model, 'nn.Dropout') then
+    model:setp(p)
+  elseif model.modules then
+    for i=1,#model.modules do
+      setDropout(model.modules[i], p)
+    end
+  end
 end
 
 function printOutputSizes(model)
@@ -269,6 +316,103 @@ function printOutputSizes(model)
   for i=1,#model.modules do
     printOutputSizes(model.modules[i])
   end
+end
+
+function rgbToHsl(r, g, b)
+  local max, min = math.max(r, g, b), math.min(r, g, b)
+  local h, s, l
+
+  l = (max + min) / 2
+
+  if max == min then
+    h, s = 0, 0 -- achromatic
+  else
+    local d = max - min
+    if l > 0.5 then s = d / (2 - max - min) else s = d / (max + min) end
+    if max == r then
+      h = (g - b) / d
+      if g < b then h = h + 6 end
+    elseif max == g then h = (b - r) / d + 2
+    elseif max == b then h = (r - g) / d + 4
+    end
+    h = h / 6
+  end
+
+  return h, s, l
+end
+
+function hslToRgb(h, s, l)
+  local r, g, b
+
+  if s == 0 then
+    r, g, b = l, l, l -- achromatic
+  else
+    function hue2rgb(p, q, t)
+      if t < 0   then t = t + 1 end
+      if t > 1   then t = t - 1 end
+      if t < 1/6 then return p + (q - p) * 6 * t end
+      if t < 1/2 then return q end
+      if t < 2/3 then return p + (q - p) * (2/3 - t) * 6 end
+      return p
+    end
+
+    local q
+    if l < 0.5 then q = l * (1 + s) else q = l + s - l * s end
+    local p = 2 * l - q
+
+    r = hue2rgb(p, q, h + 1/3)
+    g = hue2rgb(p, q, h)
+    b = hue2rgb(p, q, h - 1/3)
+  end
+
+  return r, g, b
+end
+
+function rgbToHsv(r, g, b)
+  local max, min = math.max(r, g, b), math.min(r, g, b)
+  local h, s, v
+  v = max
+
+  local d = max - min
+  if max == 0 then s = 0 else s = d / max end
+
+  if max == min then
+    h = 0 -- achromatic
+  else
+    if max == r then h = (g - b) / d
+    elseif max == g then h = (b - r) / d + 2
+    elseif max == b then h = (r - g) / d + 4
+    end
+    h = h / 6
+    if h < 0 then h = h + 1 end
+  end
+
+  return h, s, v
+end
+
+function hsvToRgb(h, s, v)
+  local r, g, b
+
+  if s == 0 then
+    return v, v, v -- achromatic
+  end
+
+  h = h * 6
+  local i = math.floor(h);
+  local f = h - i;
+  local p = v * (1 - s);
+  local q = v * (1 - f * s);
+  local t = v * (1 - (1 - f) * s);
+
+  if i == 0 then r, g, b = v, t, p
+  elseif i == 1 then r, g, b = q, v, p
+  elseif i == 2 then r, g, b = p, v, t
+  elseif i == 3 then r, g, b = p, q, v
+  elseif i == 4 then r, g, b = t, p, v
+  elseif i == 5 then r, g, b = v, p, q
+  end
+
+  return r, g, b
 end
 
 local va = require 'vararg'

@@ -48,9 +48,6 @@ local initcheck = require 'argcheck'{
 
 local DataLoader = torch.class('DataLoader')
 
-local min = math.min
-local ceil = math.ceil
-
 function DataLoader:__init(...)
   local args = initcheck(...)
   for k,v in pairs(args) do self[k] = v end
@@ -69,7 +66,7 @@ function DataLoader:__init(...)
 
   ----------------------------------------------------------------------
   -- Options for the GNU find command
-  local extensionList = {'jpg', 'png','JPG','PNG','JPEG', 'ppm', 'PPM', 'bmp', 'BMP'}
+  local extensionList = {'jpg', 'png','JPG','PNG','JPEG', 'ppm', 'PPM', 'bmp', 'BMP', 't7'}
   local findOptions = ' -iname "*.' .. extensionList[1] .. '"'
   for i=2,#extensionList do
     findOptions = findOptions .. ' -o -iname "*.' .. extensionList[i] .. '"'
@@ -82,7 +79,8 @@ function DataLoader:__init(...)
   self.lineOffset = {}
   self.numSamples = 0
   for i=1,#self.inputs do
-    if paths.filep(self.inputs[i]) then
+    if paths.extname(self.inputs[i]) == '' and paths.filep(self.inputs[i]) then
+      print("Using " .. self.inputs[i] .. " as input list file.")
       self.imageListFile[i] = self.inputs[i]
     else
       self.imageListFile[i] = os.tmpname()
@@ -149,7 +147,7 @@ function DataLoader:sample(quantity)
     for i=1,#self.inputs do
       local count = i < #self.inputs and self.weights[i] * quantity or quantity - #indices
       for j=1,count do
-        indices[#indices+1] = index + ceil(torch.uniform() * self:size(i))
+        indices[#indices+1] = index + math.ceil(torch.uniform() * self:size(i))
       end
       index = index + self:size(i)
     end
@@ -161,7 +159,7 @@ function DataLoader:get(start, endIncl)
   local indices
   if type(start) == 'number' then
     if type(endIncl) == 'number' then -- range of indices
-      endIncl = min(endIncl, self:size())
+      endIncl = math.min(endIncl, self:size())
       indices = torch.range(start, endIncl)
     else -- single index
       indices = {start}
@@ -178,11 +176,17 @@ end
 
 function DataLoader.loadInputs(pathNames, preprocessFn, workerFn)
   collectgarbage()
-  local inputs = {}
-  for j=1,#pathNames do
-    inputs[#inputs+1] = preprocessFn(pathNames[j])
+  local first = preprocessFn(pathNames[1])
+  local size = torch.LongStorage(first:dim() + 1)
+  size[1] = #pathNames
+  for i=1,first:dim() do
+    size[i+1] = first:size(i)
   end
-  inputs = tableToBatchTensor(inputs)
+  local inputs = first.new(size)
+  inputs[1] = first
+  for i=2,#pathNames do
+    inputs[i] = preprocessFn(pathNames[i])
+  end
   if workerFn then
     return workerFn(pathNames, inputs)
   else
@@ -196,9 +200,9 @@ function DataLoader:runAsync(batchSize, epochSize, randomSample, preprocessFn, w
   end
 
   if epochSize == -1 then
-    epochSize = ceil(self:size() * 1.0 / batchSize)
+    epochSize = math.ceil(self:size() * 1.0 / batchSize)
   end
-  epochSize = min(epochSize, ceil(self:size() * 1.0 / batchSize))
+  epochSize = math.min(epochSize, math.ceil(self:size() * 1.0 / batchSize))
 
   startBatch = startBatch or 1
   if startBatch > epochSize then return end
@@ -206,7 +210,7 @@ function DataLoader:runAsync(batchSize, epochSize, randomSample, preprocessFn, w
 
   local indexStart = (startBatch-1) * batchSize + 1
   for i=startBatch,epochSize do
-    local indexEnd = min(indexStart + batchSize - 1, self:size())
+    local indexEnd = math.min(indexStart + batchSize - 1, self:size())
     local pathNames = randomSample and self:sample(batchSize) or self:get(indexStart, indexEnd)
     threads:addjob(self.loadInputs, resultHandler, pathNames, preprocessFn, workerFn)
     indexStart = indexEnd + 1

@@ -1,5 +1,4 @@
 Check why multithread preprocess is not faster
-Log graphs
 Count flops
 Allow for customization of sgd strategy
 Add hard negative mining to TrainSVM.lua

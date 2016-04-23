@@ -21,6 +21,7 @@ function M:__init(path)
   if path then
     self:load(path)
   end
+  setDropout(self.model, opts.dropout)
   Parent.__init(self, self.model)
 
   print('=> Model')
@@ -69,23 +70,21 @@ function M:forward(inputs, deterministic)
   return self.model:forward(inputs)
 end
 
-local function updateModel(model, gradParams, loss, cnt, stats)
-  opts.processor:accStats(stats)
-  model.loss = model.loss + loss
-  model.count = model.count + cnt
-  if gradParams then
-    model.gradParams:add(gradParams)
-  end
-  if opts.epoch % opts.updateEvery == 0 then
-    opts.processor:updateModel()
+local function updateModel(loss, cnt, stats)
+  _model.trainIter = _model.trainIter + 1
+  _model.loss = _model.loss + loss
+  _model.count = _model.count + cnt
+  _processor:accStats(stats)
+  if _model.trainIter % opts.updateEvery == 0 then
+    _processor:updateModel()
   end
   jobDone()
 end
 
-local function accValResults(model, loss, cnt, stats)
-  opts.processor:accStats(stats)
-  model.loss = model.loss + loss
-  model.count = model.count + cnt
+local function accValResults(loss, cnt, stats)
+  _processor:accStats(stats)
+  _model.loss = _model.loss + loss
+  _model.count = _model.count + cnt
   jobDone()
 end
 
@@ -93,11 +92,14 @@ function M:train(trainFn, valFn)
   if not(opts.input) then
     error('Input must be defined for training.')
   end
+  if _model ~= self then
+    error('You can only train the main model.')
+  end
   if not trainFn then
-    trainFn = opts.processor.train
+    trainFn = _processor.train
   end
   if not valFn then
-    valFn = opts.processor.test
+    valFn = _processor.test
   end
 
   local trainLoader = DataLoader{inputs = opts.input, weights = opts.inputWeights}
@@ -109,10 +111,14 @@ function M:train(trainFn, valFn)
 
   if opts.optimState ~= '' then
     opts.optimState = torch.load(opts.optimState)
+    opts.LR = opts.optimState.learningRate
+    opts.LRDecay = opts.optimState.learningRateDecay
+    opts.momentum = opts.optimState.momentum
+    opts.weightDecay = opts.optimState.weightDecay
   else
     opts.optimState = {
       learningRate = opts.LR,
-      learningRateDecay = 0.0,
+      learningRateDecay = opts.LRDecay,
       momentum = opts.momentum,
       dampening = 0.0,
       nesterov = true,
@@ -122,13 +128,14 @@ function M:train(trainFn, valFn)
 
   local signal = require("posix.signal")
   signal.signal(signal.SIGINT, function(signum)
+    print("Interrupt!")
     if opts.output and opts.output ~= '' then
       self:save(opts.backupdir .. opts.basename .. '.interrupt')
     end
-    os.exit(128 + signum)
+    os.exit(-1)
   end)
 
-  self:zeroGradParameters()
+  self.trainIter = 0
   self.trainLoss = torch.Tensor(opts.epochs)
   self.valLoss = torch.Tensor(opts.epochs)
   for epoch=1,opts.epochs do
@@ -138,34 +145,39 @@ function M:train(trainFn, valFn)
     end)
     print('==> training epoch # ' .. epoch)
 
+    if opts.LRDropEvery ~= -1 and epoch % opts.LRDropEvery == 0 then
+      opts.LR = opts.LR / opts.LRDropFactor
+      opts.optimState.LR = opts.LR
+    end
+
     self.loss = 0
     self.count = 0
-    opts.processor:resetStats()
+    _processor:resetStats()
     trainLoader:runAsync(opts.batchSize,
                          opts.epochSize,
                          true, --randomSample
-                         bindPost(opts.processor.preprocessFn, true),
+                         bindPost(_processor.preprocessFn, true),
                          trainFn,
-                         bind(updateModel, self))
+                         updateModel)
     self.loss = self.loss / self.count
     self.trainLoss[epoch] = self.loss
     print(string.format('  Training loss: %.6f', self.loss))
-    printlog(opts.processor:processStats('train'))
+    logprint(_processor:processStats('train'))
 
     if opts.val ~= '' and epoch % opts.valEvery == 0 then
       self.loss = 0
       self.count = 0
-      opts.processor:resetStats()
+      _processor:resetStats()
       validLoader:runAsync(opts.valBatchSize,
                            opts.valSize,
                            false, --randomSample
-                           bindPost(opts.processor.preprocessFn, false),
+                           bindPost(_processor.preprocessFn, false),
                            valFn,
-                           bind(accValResults, self))
+                           accValResults)
       self.loss = self.loss / self.count
       self.valLoss[epoch] = self.loss
       print(string.format('  Validation loss: %.6f', self.loss))
-      print(opts.processor:processStats('val'))
+      print(_processor:processStats('val'))
       print()
     end
 
@@ -187,6 +199,9 @@ function M:train(trainFn, valFn)
     if opts.cacheEvery ~= -1 and epoch % opts.cacheEvery == 0 and
        opts.output and opts.output ~= '' then
       self:save(opts.backupdir .. opts.basename .. '.cached')
+      augmentThreadState(function()
+        _model:clearState()
+      end)
     end
   end
 
@@ -197,9 +212,6 @@ end
 
 function M:save(filename)
   self:clearState()
-  augmentThreadState(function()
-    model:clearState()
-  end)
   torch.save(filename, self.model)
   opts.optimState.dfdx = nil
   torch.save(filename .. '.optimState', opts.optimState)
