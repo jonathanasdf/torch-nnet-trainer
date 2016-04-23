@@ -19,6 +19,7 @@ function M:initializeThreads()
   print("Copying models to threads...")
   gpu = 1
   _model = self.model
+  _model:zeroGradParameters()
   _processor = self
   processorOpts = self.processorOpts
   if nThreads == 0 then
@@ -35,6 +36,8 @@ function M:initializeThreads()
   if nGPU > 0 then assert(cutorch.getDevice() == 1) end
   local nDevices = math.max(nGPU, 1)
   local localModel = self.model
+  local localCriterion
+  if self.criterion then localCriterion = self.criterion end
   local models = {}
   local mutexes = {}
   for device=1,nDevices do
@@ -42,6 +45,7 @@ function M:initializeThreads()
       cutorch.setDevice(device)
       localModel = localModel:clone()
       localModel.params, localModel.gradParams = localModel:getParameters()
+      if localCriterion then localCriterion = localCriterion:clone() end
     end
     models[device] = localModel
     -- Separate mutex for each GPU
@@ -52,32 +56,11 @@ function M:initializeThreads()
         function()
           gpu = device
           if nGPU > 0 then cutorch.setDevice(device) end
+          _model = localModel
           _processor = this
-          if _processor.criterion then
-            _processor.criterion = _processor.criterion:clone()
-          end
+          _processor.criterion = localCriterion
           processorOpts = this.processorOpts
-          if opts.replicateModel then
-            if __threadid <= nDevices then
-              _model = localModel
-            else
-              _model = localModel:clone('weight', 'bias')
-              _model.params, _model.gradParams = _model:getParameters()
-            end
-            collectgarbage(); collectgarbage()
-            isReplica = __threadid ~= nDevices
-            if isReplica then
-              mutex = {}
-              mutex.lock = function() end
-              mutex.unlock = function() end
-            else
-              mutex = (require 'threads').Mutex(mutexId)
-            end
-          else
-            _model = localModel
-            isReplica = device ~= 1
-            mutex = (require 'threads').Mutex(mutexId)
-          end
+          mutex = (require 'threads').Mutex(mutexId)
         end
       )
     end end
@@ -102,17 +85,11 @@ function M.getLabels(pathNames)
 end
 
 function M.forward(inputs, deterministic)
-  local outputs = _model:forward(inputs, deterministic)
-  outputs = outputs:view(inputs:size(1), -1)
-  return outputs
+  return _model:forward(inputs, deterministic)
 end
 
--- Return gradParams if isReplica, otherwise accumulate gradients in model and return nil
+-- accumulate gradients in model
 function M.backward(inputs, gradOutputs, gradLayer)
-  if isReplica then
-    _model:zeroGradParameters()
-  end
-
   if gradLayer then
     -- feed gradients through a specific layer
     for i=gradLayer,2,-1 do
@@ -122,37 +99,40 @@ function M.backward(inputs, gradOutputs, gradLayer)
   else
     _model:backward(inputs, gradOutputs)
   end
-
-  local gradParams
-  if isReplica then
-    gradParams = _model.gradParams:clone()
-  end
-  return gradParams
 end
 
 -- Performs a forward and backward pass through the model
 function M.train(pathNames, inputs)
   if not(_processor.criterion) then
-    error('processor.criterion is not defined. Either define a criterion or a custom trainBatch.')
+    error('processor.criterion is not defined. Either define a criterion or a custom train function.')
   end
-  if nGPU > 0 and not(inputs.getDevice) then inputs = inputs:cuda() end
+  if _processor.criterion.sizeAverage ~= false then
+    error('this function assumes criterion.sizeAverage == false because we divide through by batchCount.')
+  end
   local labels = _processor.getLabels(pathNames)
+  if nGPU > 0 and not(inputs.getDevice) then inputs = inputs:cuda() end
+  if nGPU > 0 and not(labels.getDevice) then labels = labels:cuda() end
 
   mutex:lock()
   local outputs = _processor.forward(inputs)
-  --Assumes criterion.sizeAverage = false
-  local loss = _processor.criterion:forward(outputs, labels)
   local stats = _processor.calcStats(pathNames, outputs, labels)
+  local loss = _processor.criterion:forward(outputs, labels)
   local gradOutputs = _processor.criterion:backward(outputs, labels)
-  local gradParams = _processor.backward(inputs, gradOutputs)
+  _processor.backward(inputs, gradOutputs / opts.batchCount)
   mutex:unlock()
-  return gradParams, loss, labels:size(1), stats
+  return loss, labels:size(1), stats
 end
 
 function M:updateModel()
   self.mutexes[1]:lock()
-  local p = self.model.params:clone()
-  optim.sgd(function() return 0, self.model.gradParams / opts.batchCount end, self.model.params, opts.optimState)
+  for i=2,nGPU do
+    self.mutexes[i]:lock()
+    self.model.gradParams:add(self.models[i].gradParams:clone())
+    self.models[i]:zeroGradParams()
+    self.mutexes[i]:unlock()
+  end
+
+  optim.sgd(function() return 0, self.model.gradParams  end, self.model.params, opts.optimState)
   self.model:zeroGradParameters()
   self.mutexes[1]:unlock()
 
@@ -180,16 +160,17 @@ function M.testWithLabels(pathNames, inputs, labels)
   local outputs = _processor.forward(inputs, true)
 
   --Assumes criterion.sizeAverage = false
-  local loss = _processor.criterion:forward(outputs, labels)
   local stats = _processor.calcStats(pathNames, outputs, labels)
+  local loss = _processor.criterion:forward(outputs, labels)
   mutex:unlock()
 
   return loss, labels:size(1), stats
 end
 
 function M.test(pathNames, inputs)
-  if nGPU > 0 and not(inputs.getDevice) then inputs = inputs:cuda() end
   local labels = _processor.getLabels(pathNames)
+  if nGPU > 0 and not(inputs.getDevice) then inputs = inputs:cuda() end
+  if nGPU > 0 and not(labels.getDevice) then labels = labels:cuda() end
   return _processor.testWithLabels(pathNames, inputs, labels)
 end
 

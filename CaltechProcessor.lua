@@ -42,8 +42,7 @@ function M:__init(model, processorOpts)
 
   local w = self.processorOpts.negativesWeight
   local weights = torch.Tensor{w/(1+w), 1/(1+w)} * 2
-  self.criterion = nn.TrueNLLCriterion(weights)
-  self.criterion.sizeAverage = false
+  self.criterion = nn.TrueNLLCriterion(weights, false)
   if nGPU > 0 then
     self.criterion = self.criterion:cuda()
   end
@@ -291,7 +290,6 @@ function M.forward(inputs, deterministic)
   if processorOpts.svm ~= '' then
     outputs = findModuleByName(_model, processorOpts.layer).output
   end
-  outputs = outputs:view(inputs:size(1), -1)
   return outputs
 end
 

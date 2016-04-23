@@ -70,16 +70,10 @@ function M:forward(inputs, deterministic)
   return self.model:forward(inputs)
 end
 
-local function updateModel(gradParams, loss, cnt, stats)
-  _processor:accStats(stats)
+local function updateModel(loss, cnt, stats)
   _model.loss = _model.loss + loss
   _model.count = _model.count + cnt
-  if gradParams then
-    if nGPU > 0 and gradParams:getDevice() ~= 1 then
-      gradParams = gradParams:clone()
-    end
-    _model.gradParams:add(gradParams)
-  end
+  _processor:accStats(stats)
   if opts.epoch % opts.updateEvery == 0 then
     _processor:updateModel()
   end
@@ -116,10 +110,14 @@ function M:train(trainFn, valFn)
 
   if opts.optimState ~= '' then
     opts.optimState = torch.load(opts.optimState)
+    opts.LR = opts.optimState.learningRate
+    opts.LRDecay = opts.optimState.learningRateDecay
+    opts.momentum = opts.optimState.momentum
+    opts.weightDecay = opts.optimState.weightDecay
   else
     opts.optimState = {
       learningRate = opts.LR,
-      learningRateDecay = 0.0,
+      learningRateDecay = opts.LRDecay,
       momentum = opts.momentum,
       dampening = 0.0,
       nesterov = true,
@@ -136,7 +134,6 @@ function M:train(trainFn, valFn)
     os.exit(-1)
   end)
 
-  self:zeroGradParameters()
   self.trainLoss = torch.Tensor(opts.epochs)
   self.valLoss = torch.Tensor(opts.epochs)
   for epoch=1,opts.epochs do
@@ -145,6 +142,11 @@ function M:train(trainFn, valFn)
       opts.epoch = epoch
     end)
     print('==> training epoch # ' .. epoch)
+
+    if opts.LRDropEvery ~= -1 and epoch % opts.LRDropEvery == 0 then
+      opts.LR = opts.LR / opts.LRDropFactor
+      opts.optimState.LR = opts.LR
+    end
 
     self.loss = 0
     self.count = 0

@@ -53,8 +53,7 @@ function M:__init(model, processorOpts)
     end
   end
 
-  self.criterion = nn.TrueNLLCriterion()
-  self.criterion.sizeAverage = false
+  self.criterion = nn.TrueNLLCriterion(nil, false)
   if nGPU > 0 then
     require 'cutorch'
     self.criterion = self.criterion:cuda()

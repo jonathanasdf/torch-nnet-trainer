@@ -5,8 +5,7 @@ local M = torch.class('CifarProcessor', 'Processor')
 function M:__init(model, processorOpts)
   Processor.__init(self, model, processorOpts)
 
-  self.criterion = nn.TrueNLLCriterion()
-  self.criterion.sizeAverage = false
+  self.criterion = nn.CrossEntropyCriterion(nil, false)
   if nGPU > 0 then
     require 'cutorch'
     self.criterion = self.criterion:cuda()
@@ -19,6 +18,7 @@ end
 
 function M.getLabels(pathNames)
   local labels = torch.Tensor(#pathNames)
+  if nGPU > 0 then labels = labels:cuda() end
   for i=1,#pathNames do
     labels[i] = tonumber(paths.basename(paths.dirname(pathNames[i])))
   end
@@ -26,12 +26,11 @@ function M.getLabels(pathNames)
 end
 
 function M.calcStats(pathNames, outputs, labels)
-  local _, i = torch.max(outputs, 2)
-  return {i, labels}
+  return {outputs:clone(), labels}
 end
 
 function M:resetStats()
-  self.stats = optim.ConfusionMatrix({'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'})
+  self.stats = optim.ConfusionMatrix(10)
 end
 
 function M:accStats(new_stats)

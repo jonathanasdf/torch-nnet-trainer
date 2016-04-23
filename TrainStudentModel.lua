@@ -27,8 +27,7 @@ processArgs(cmd)
 assert(paths.filep(opts.teacher), 'Cannot find teacher model ' .. opts.teacher)
 assert(paths.filep(opts.student), 'Cannot find student model ' .. opts.student)
 
-local criterion = opts.useMSE and nn.MSECriterion() or SoftCrossEntropyCriterion(opts.T)
-criterion.sizeAverage = false
+local criterion = opts.useMSE and nn.MSECriterion(false) or SoftCrossEntropyCriterion(opts.T, false)
 if nGPU > 0 then
   criterion = criterion:cuda()
 end
@@ -66,10 +65,12 @@ else
   if nGPU > 0 then assert(cutorch.getDevice() == 1) end
   local nDevices = math.max(nGPU, 1)
   local localTeacher = teacher
+  local localSoftCriterion = criterion
   for device=1,nDevices do
     if device ~= 1 then
       cutorch.setDevice(device)
       localTeacher = localTeacher:clone()
+      localSoftCriterion = localSoftCriterion:clone()
     end
     local teacherMutexId = (require 'threads').Mutex():id()
     for i=device-1,nThreads,nDevices do if i > 0 then
@@ -88,7 +89,7 @@ else
             _teacherProcessor = teacherProcessor
           end
           teacherMutex = (require 'threads').Mutex(teacherMutexId)
-          softCriterion = criterion:clone()
+          softCriterion = localSoftCriterion
         end
       )
     end end
@@ -119,21 +120,17 @@ local function train(pathNames, studentInputs)
 
   local softLoss = softCriterion:forward(studentLayerOutputs, teacherLayerOutputs)
   local softGradOutputs = softCriterion:backward(studentLayerOutputs, teacherLayerOutputs)
-  local softGradParams = _processor.backward(studentInputs, softGradOutputs, _processor.studentLayer)
+  _processor.backward(studentInputs, softGradOutputs / opts.batchCount, _processor.studentLayer)
 
   -- Hard labels
   local hardLoss = _processor.criterion:forward(studentOutputs, labels)*_processor.lambda
   local stats = _processor.calcStats(pathNames, studentOutputs, labels)
   local hardGradOutputs = _processor.criterion:backward(studentOutputs, labels)*_processor.lambda
-  local hardGradParams = _processor.backward(studentInputs, hardGradOutputs)
+  _processor.backward(studentInputs, hardGradOutputs / opts.batchCount)
 
-  local gradParams
-  if softGradParams then
-    gradParams = softGradParams + hardGradParams
-  end
   mutex:unlock()
 
-  return gradParams, softLoss + hardLoss, labels:size(1), stats
+  return softLoss + hardLoss, labels:size(1), stats
 end
 
 student:train(train)
