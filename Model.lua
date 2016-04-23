@@ -71,10 +71,11 @@ function M:forward(inputs, deterministic)
 end
 
 local function updateModel(loss, cnt, stats)
+  _model.trainIter = _model.trainIter + 1
   _model.loss = _model.loss + loss
   _model.count = _model.count + cnt
   _processor:accStats(stats)
-  if opts.epoch % opts.updateEvery == 0 then
+  if _model.trainIter % opts.updateEvery == 0 then
     _processor:updateModel()
   end
   jobDone()
@@ -134,6 +135,7 @@ function M:train(trainFn, valFn)
     os.exit(-1)
   end)
 
+  self.trainIter = 0
   self.trainLoss = torch.Tensor(opts.epochs)
   self.valLoss = torch.Tensor(opts.epochs)
   for epoch=1,opts.epochs do

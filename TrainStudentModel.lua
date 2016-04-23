@@ -100,8 +100,9 @@ end
 
 
 local function train(pathNames, studentInputs)
-  if nGPU > 0 and not(studentInputs.getDevice) then studentInputs = studentInputs:cuda() end
   local labels = _processor.getLabels(pathNames)
+  if nGPU > 0 and not(studentInputs.getDevice) then studentInputs = studentInputs:cuda() end
+  if nGPU > 0 and not(labels.getDevice) then labels = labels:cuda() end
 
   local teacherInputs = studentInputs
   if _teacherProcessor then
@@ -115,6 +116,7 @@ local function train(pathNames, studentInputs)
   teacherMutex:unlock()
 
   mutex:lock()
+
   local studentOutputs = _model:forward(studentInputs)
   local studentLayerOutputs = _model.model:get(_processor.studentLayer).output
 

@@ -167,7 +167,6 @@ function M.preprocess(path, isTraining, processorOpts)
       img = image.scale(img, sz, sz)
     end
     img = Transforms.HorizontalFlip(processorOpts.flip)(img)
-    img = Transforms.ColorJitter{brightness = 0.4, contrast = 0.4, saturation = 0.4}(img)
   end
 
   if processorOpts.inceptionPreprocessing then

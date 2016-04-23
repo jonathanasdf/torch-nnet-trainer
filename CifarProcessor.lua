@@ -1,4 +1,3 @@
-require 'fbnn'
 local Processor = require 'Processor'
 local M = torch.class('CifarProcessor', 'Processor')
 

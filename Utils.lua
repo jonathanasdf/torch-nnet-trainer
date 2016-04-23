@@ -53,14 +53,20 @@ function processArgs(cmd)
       print('Not enough threads to use all gpus. Increasing nThreads to ' .. opts.nThreads)
     end
   end
+
+  if opts.nThreads > 1 then
+    error('There is currently a bug with nThreads > 1.')
+  end
+
+  nGPU = opts.nGPU
+  nThreads = opts.nThreads
+
+
   if opts.val and opts.val ~= '' then
     if opts.valBatchSize == -1 then
       opts.valBatchSize = opts.batchSize
     end
   end
-
-  nGPU = opts.nGPU
-  nThreads = opts.nThreads
 
   if not opts.updateEvery then opts.updateEvery = 1 end
   opts.batchCount = opts.batchSize * opts.updateEvery
@@ -92,6 +98,8 @@ function processArgs(cmd)
     gnuplot.xlabel('epoch')
     gnuplot.ylabel('loss')
     gnuplot.grid(true)
+  else
+    logprint = function() end
   end
 
   local opt = opts

@@ -17,6 +17,7 @@ end
 
 function M:initializeThreads()
   print("Copying models to threads...")
+  self.model.needsSync = torch.ByteTensor{0}
   gpu = 1
   _model = self.model
   _model:zeroGradParameters()
@@ -99,6 +100,7 @@ function M.backward(inputs, gradOutputs, gradLayer)
   else
     _model:backward(inputs, gradOutputs)
   end
+  _model.needsSync[1] = 1
 end
 
 -- Performs a forward and backward pass through the model
@@ -126,23 +128,33 @@ end
 function M:updateModel()
   self.mutexes[1]:lock()
   for i=2,nGPU do
-    self.mutexes[i]:lock()
-    self.model.gradParams:add(self.models[i].gradParams:clone())
-    self.models[i]:zeroGradParams()
-    self.mutexes[i]:unlock()
+    if self.models[i].needsSync[1] == 1 then
+      self.mutexes[i]:lock()
+      self.model.gradParams:add(self.models[i].gradParams:clone())
+      self.models[i]:zeroGradParams()
+      self.models[i].needsSync[1] = 0
+      self.mutexes[i]:unlock()
+    end
   end
-
-  optim.sgd(function() return 0, self.model.gradParams  end, self.model.params, opts.optimState)
-  self.model:zeroGradParameters()
   self.mutexes[1]:unlock()
 
-  for i=2,nGPU do
-    cutorch.setDevice(i)
-    self.mutexes[i]:lock()
-    self.models[i].params:copy(self.model.params:clone())
-    self.mutexes[i]:unlock()
+  if self.model.needsSync[1] == 1 then
+    self.mutexes[1]:lock()
+    optim.sgd(function() return 0, self.model.gradParams end, self.model.params, opts.optimState)
+    self.model:zeroGradParameters()
+    self.model.needsSync[1] = 0
+    self.mutexes[1]:unlock()
+
+    if nGPU > 1 then
+      for i=2,nGPU do
+        cutorch.setDevice(i)
+        self.mutexes[i]:lock()
+        self.models[i].params:copy(self.model.params:clone())
+        self.mutexes[i]:unlock()
+      end
+      cutorch.setDevice(1)
+    end
   end
-  cutorch.setDevice(1)
 end
 
 -- Calculate and return stats, but don't accumulate them since this is likely on another thread
