@@ -25,7 +25,7 @@ function M.getLabels(pathNames)
 end
 
 function M.calcStats(pathNames, outputs, labels)
-  return {outputs:clone(), labels}
+  return {outputs, labels}
 end
 
 function M:resetStats()

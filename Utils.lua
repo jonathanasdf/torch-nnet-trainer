@@ -7,7 +7,7 @@ function defineBaseOptions(cmd)
   cmd:option('-processorOpts', '', 'additional options for the processor')
   cmd:option('-batchSize', 32, 'batch size')
   cmd:option('-epochSize', -1, 'num batches per epochs. -1 means run all available data once')
-  cmd:option('-dropout', 0.5, 'dropout probability')
+  cmd:option('-dropout', -1, 'dropout probability. -1 means leave it untouched')
   cmd:option('-nThreads', 4, 'number of worker threads')
   cmd:option('-nGPU', 1, 'number of GPU to use. Set to -1 to use CPU')
 end
@@ -18,6 +18,7 @@ function defineTrainingOptions(cmd)
   cmd:option('-LRDropEvery', -1, 'reduce learning rate every n epochs')
   cmd:option('-LRDropFactor', 10, 'factor to reduce learning rate')
   cmd:option('-momentum', 0.9, 'momentum')
+  cmd:option('-nesterov', 1, 'use nesterov momentum')
   cmd:option('-weightDecay', 0.0005, 'weight decay')
   cmd:option('-inputWeights', '', 'comma separated weights to balance input classes for each batch')
   cmd:option('-epochs', 50, 'num epochs')
@@ -118,6 +119,7 @@ function processArgs(cmd)
       require 'draw'
       require 'fbnn'
       require 'gnuplot'
+      require 'hdf5'
       require 'image'
       require 'optim'
       require 'paths'
@@ -267,6 +269,30 @@ function readAll(file)
     return content
 end
 
+function dirtree(dir)
+  -- Code by David Kastrup
+  require "lfs"
+  assert(dir and dir ~= "", "directory parameter is missing or empty")
+  if string.sub(dir, -1) == "/" then
+    dir=string.sub(dir, 1, -2)
+  end
+
+  local function yieldtree(dir)
+    for entry in lfs.dir(dir) do
+      if entry ~= "." and entry ~= ".." then
+        entry=dir.."/"..entry
+        local attr=lfs.attributes(entry)
+        coroutine.yield(entry,attr)
+        if attr.mode == "directory" then
+          yieldtree(entry)
+        end
+      end
+    end
+  end
+
+  return coroutine.wrap(function() yieldtree(dir) end)
+end
+
 function os.capture(cmd, raw)
   local f = assert(io.popen(cmd, 'r'))
   local s = assert(f:read('*a'))
@@ -295,6 +321,7 @@ function findModuleByName(model, name)
 end
 
 function setDropout(model, p)
+  if p == -1 then return end
   if torch.isTypeOf(model, 'nn.Dropout') then
     model:setp(p)
   elseif model.modules then

@@ -115,15 +115,18 @@ function M:train(trainFn, valFn)
     opts.LRDecay = opts.optimState.learningRateDecay
     opts.momentum = opts.optimState.momentum
     opts.weightDecay = opts.optimState.weightDecay
+    opts.nesterov = opts.optimState.nesterov
   else
     opts.optimState = {
       learningRate = opts.LR,
       learningRateDecay = opts.LRDecay,
       momentum = opts.momentum,
-      dampening = 0.0,
-      nesterov = true,
       weightDecay = opts.weightDecay
     }
+    if opts.nesterov == 1 then
+      opts.optimState.dampening = 0.0
+      opts.optimState.nesterov = true
+    end
   end
 
   local signal = require("posix.signal")
@@ -144,11 +147,6 @@ function M:train(trainFn, valFn)
       opts.epoch = epoch
     end)
     print('==> training epoch # ' .. epoch)
-
-    if opts.LRDropEvery ~= -1 and epoch % opts.LRDropEvery == 0 then
-      opts.LR = opts.LR / opts.LRDropFactor
-      opts.optimState.LR = opts.LR
-    end
 
     self.loss = 0
     self.count = 0
@@ -179,6 +177,11 @@ function M:train(trainFn, valFn)
       print(string.format('  Validation loss: %.6f', self.loss))
       print(_processor:processStats('val'))
       print()
+    end
+
+    if opts.LRDropEvery ~= -1 and epoch % opts.LRDropEvery == 0 then
+      opts.LR = opts.LR / opts.LRDropFactor
+      opts.optimState.learningRate = opts.LR
     end
 
     if opts.logdir then
