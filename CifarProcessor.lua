@@ -39,7 +39,7 @@ function M.getLabels(pathNames)
 end
 
 function M.calcStats(pathNames, outputs, labels)
-  return {outputs, labels}
+  return {outputs:clone(), labels}
 end
 
 function M:resetStats()
@@ -52,13 +52,14 @@ end
 
 function M:processStats(phase)
   self.stats:updateValids()
-  if phase == 'train' then
-    self.trainAcc[opts.epoch] = self.stats.averageValid
-  elseif phase == 'val' then
-    self.valAcc[opts.epoch] = self.stats.averageValid
-  end
 
-  if self.trainGraph then
+  if self.graph then
+    if phase == 'train' then
+      self.trainAcc[opts.epoch] = self.stats.averageValid
+    elseif phase == 'val' then
+      self.valAcc[opts.epoch] = self.stats.averageValid
+    end
+
     gnuplot.figure(self.graph)
     local x = torch.range(1, opts.epoch):long()
     local x2 = torch.range(opts.valEvery, opts.epoch):long()
