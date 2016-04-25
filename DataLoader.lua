@@ -66,7 +66,7 @@ function DataLoader:__init(...)
 
   ----------------------------------------------------------------------
   -- Options for the GNU find command
-  local extensionList = {'jpg', 'png','JPG','PNG','JPEG', 'ppm', 'PPM', 'bmp', 'BMP', 't7'}
+  local extensionList = {'jpg', 'png','JPG','PNG','JPEG', 'ppm', 'PPM', 'bmp', 'BMP', 'h5', 't7'}
   local findOptions = ' -iname "*.' .. extensionList[1] .. '"'
   for i=2,#extensionList do
     findOptions = findOptions .. ' -o -iname "*.' .. extensionList[i] .. '"'

@@ -115,15 +115,18 @@ function M:train(trainFn, valFn)
     opts.LRDecay = opts.optimState.learningRateDecay
     opts.momentum = opts.optimState.momentum
     opts.weightDecay = opts.optimState.weightDecay
+    opts.nesterov = opts.optimState.nesterov
   else
     opts.optimState = {
       learningRate = opts.LR,
       learningRateDecay = opts.LRDecay,
       momentum = opts.momentum,
-      dampening = 0.0,
-      nesterov = true,
       weightDecay = opts.weightDecay
     }
+    if opts.nesterov == 1 then
+      opts.optimState.dampening = 0.0
+      opts.optimState.nesterov = true
+    end
   end
 
   local signal = require("posix.signal")
@@ -144,11 +147,6 @@ function M:train(trainFn, valFn)
       opts.epoch = epoch
     end)
     print('==> training epoch # ' .. epoch)
-
-    if opts.LRDropEvery ~= -1 and epoch % opts.LRDropEvery == 0 then
-      opts.LR = opts.LR / opts.LRDropFactor
-      opts.optimState.LR = opts.LR
-    end
 
     self.loss = 0
     self.count = 0
@@ -181,6 +179,11 @@ function M:train(trainFn, valFn)
       print()
     end
 
+    if opts.LRDropEvery ~= -1 and epoch % opts.LRDropEvery == 0 then
+      opts.LR = opts.LR / opts.LRDropFactor
+      opts.optimState.learningRate = opts.LR
+    end
+
     if opts.logdir then
       gnuplot.figure(opts.lossGraph)
       local valX
@@ -194,14 +197,17 @@ function M:train(trainFn, valFn)
         gnuplot.plot({'train', trainX, self.trainLoss:index(1, trainX), '+-'})
       end
       gnuplot.plotflush()
-    end
 
-    if opts.cacheEvery ~= -1 and epoch % opts.cacheEvery == 0 and
-       opts.output and opts.output ~= '' then
-      self:save(opts.backupdir .. opts.basename .. '.cached')
-      augmentThreadState(function()
-        _model:clearState()
-      end)
+      if opts.cacheEvery ~= -1 and epoch % opts.cacheEvery == 0 then
+        local cachename = opts.backupdir .. opts.basename .. '.cached'
+        self:save(cachename)
+        if opts.keepCaches then
+          os.execute('cp ' .. cachename .. ' ' .. opts.cachedir .. 'epoch' .. epoch .. '.t7')
+        end
+        augmentThreadState(function()
+          _model:clearState()
+        end)
+      end
     end
   end
 
