@@ -1,12 +1,12 @@
 package.path = package.path .. ';/home/nvesdapu/scripts/?.lua'
 local Transforms = require 'Transforms'
-local CaltechProcessor2 = require 'CaltechProcessor2'
-local M = torch.class('CaltechFilterbankProcessor2', 'CaltechProcessor2')
+local CaltechProcessor = require 'CaltechProcessor'
+local M = torch.class('CaltechFilterbankProcessor', 'CaltechProcessor')
 
 require 'features'
 
 function M:__init(model, processorOpts)
-  CaltechProcessor2.__init(self, model, processorOpts)
+  CaltechProcessor.__init(self, model, processorOpts)
 end
 
 function M.preprocess(path, isTraining, processorOpts)

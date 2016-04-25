@@ -57,7 +57,7 @@ function processArgs(cmd)
   end
 
   if opts.nThreads > 1 then
-    error('There is currently a bug with nThreads > 1.')
+    --error('There is currently a bug with nThreads > 1.')
   end
 
   nGPU = opts.nGPU
@@ -106,6 +106,9 @@ function processArgs(cmd)
     gnuplot.grid(true)
   else
     logprint = function() end
+    for k,v in pairs(opts) do
+      print(k, v)
+    end
   end
 
   local opt = opts
