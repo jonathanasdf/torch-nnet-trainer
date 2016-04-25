@@ -24,6 +24,7 @@ function defineTrainingOptions(cmd)
   cmd:option('-epochs', 50, 'num epochs')
   cmd:option('-updateEvery', 1, 'update model with sgd every n batches')
   cmd:option('-cacheEvery', 20, 'save model every n epochs. Set to -1 or a value >epochs to disable')
+  cmd:option('-keepCaches', false, 'keep all of the caches, instead of just the most recent one')
   cmd:option('-val', '', 'validation data')
   cmd:option('-valBatchSize', -1, 'batch size for validation')
   cmd:option('-valSize', -1, 'num batches to validate. -1 means run all available data once')
@@ -62,7 +63,6 @@ function processArgs(cmd)
   nGPU = opts.nGPU
   nThreads = opts.nThreads
 
-
   if opts.val and opts.val ~= '' then
     if opts.valBatchSize == -1 then
       opts.valBatchSize = opts.batchSize
@@ -85,12 +85,17 @@ function processArgs(cmd)
     end
   end
 
+  opts.timestamp = os.date("%Y%m%d_%H%M%S")
   if opts.output and opts.output ~= '' then
     opts.dirname = paths.dirname(opts.output) .. '/'
     opts.basename = paths.basename(opts.output, paths.extname(opts.output))
     opts.backupdir = opts.dirname .. 'backups/'
     paths.mkdir(opts.backupdir)
-    opts.logdir = opts.dirname .. 'logs/' .. opts.basename .. os.date("_%Y%m%d_%H%M%S/")
+    if opts.keepCaches then
+      opts.cachedir = opts.backupdir .. opts.basename .. '_cache/' .. opts.timestamp .. '/'
+      paths.mkdir(opts.cachedir)
+    end
+    opts.logdir = opts.dirname .. 'logs/' .. opts.basename .. '_' .. opts.timestamp .. '/'
     paths.mkdir(opts.logdir)
     cmd:log(opts.logdir .. 'log.txt', opts)
     cmd:addTime()

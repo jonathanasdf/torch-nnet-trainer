@@ -11,6 +11,12 @@ function M:__init(model, processorOpts)
   Processor.__init(self, model, processorOpts)
   assert(self.processorOpts.cropSize <= self.processorOpts.resize)
 
+  self.criterion = nn.TrueNLLCriterion(nil, false)
+  if nGPU > 0 then
+    require 'cutorch'
+    self.criterion = self.criterion:cuda()
+  end
+
   local synset = '/file/imagenet/ILSVRC2012_devkit_t12/words.txt'
   if self.processorOpts.inceptionPreprocessing then
     synset = '/file/imagenet/inception_synset.txt'
@@ -51,12 +57,6 @@ function M:__init(model, processorOpts)
       self.valTop1 = torch.Tensor(opts.epochs)
       self.valTop5 = torch.Tensor(opts.epochs)
     end
-  end
-
-  self.criterion = nn.TrueNLLCriterion(nil, false)
-  if nGPU > 0 then
-    require 'cutorch'
-    self.criterion = self.criterion:cuda()
   end
 end
 

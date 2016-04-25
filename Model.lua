@@ -197,14 +197,17 @@ function M:train(trainFn, valFn)
         gnuplot.plot({'train', trainX, self.trainLoss:index(1, trainX), '+-'})
       end
       gnuplot.plotflush()
-    end
 
-    if opts.cacheEvery ~= -1 and epoch % opts.cacheEvery == 0 and
-       opts.output and opts.output ~= '' then
-      self:save(opts.backupdir .. opts.basename .. '.cached')
-      augmentThreadState(function()
-        _model:clearState()
-      end)
+      if opts.cacheEvery ~= -1 and epoch % opts.cacheEvery == 0 then
+        local cachename = opts.backupdir .. opts.basename .. '.cached'
+        self:save(cachename)
+        if opts.keepCaches then
+          os.execute('cp ' .. cachename .. ' ' .. opts.cachedir .. 'epoch' .. epoch .. '.t7')
+        end
+        augmentThreadState(function()
+          _model:clearState()
+        end)
+      end
     end
   end
 
