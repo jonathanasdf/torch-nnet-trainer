@@ -79,7 +79,7 @@ function DataLoader:__init(...)
   self.lineOffset = {}
   self.numSamples = 0
   for i=1,#self.inputs do
-    if paths.extname(self.inputs[i]) == '' and paths.filep(self.inputs[i]) then
+    if paths.filep(self.inputs[i]) and not(tableContains(extensionList, paths.extname(self.inputs[i]))) then
       print("Using " .. self.inputs[i] .. " as input list file.")
       self.imageListFile[i] = self.inputs[i]
     else

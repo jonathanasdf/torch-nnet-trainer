@@ -26,7 +26,7 @@ local function getData(pathNames, inputs)
   local labels = _processor.getLabels(pathNames)
 
   mutex:lock()
-  _model:forward(inputs, true)
+  _processor.forward(inputs, true)
   local outputs = findModuleByName(_model, opts.layer).output:clone()
   mutex:unlock()
 

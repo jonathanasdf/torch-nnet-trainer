@@ -100,6 +100,10 @@ end
 
 
 local function train(pathNames, studentInputs)
+  if softCriterion.sizeAverage ~= false or _processor.criterion.sizeAverage ~= false then
+    error('this function assumes criterion.sizeAverage == false because we divide through by batchCount.')
+  end
+
   local labels = _processor.getLabels(pathNames)
   if nGPU > 0 and not(studentInputs.getDevice) then studentInputs = studentInputs:cuda() end
   if nGPU > 0 and not(labels.getDevice) then labels = labels:cuda() end
@@ -117,7 +121,7 @@ local function train(pathNames, studentInputs)
 
   mutex:lock()
 
-  local studentOutputs = _model:forward(studentInputs)
+  local studentOutputs = _processor.forward(studentInputs)
   local studentLayerOutputs = _model.model:get(_processor.studentLayer).output
 
   local softLoss = softCriterion:forward(studentLayerOutputs, teacherLayerOutputs)

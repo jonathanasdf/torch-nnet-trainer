@@ -57,7 +57,7 @@ function processArgs(cmd)
   end
 
   if opts.nThreads > 1 then
-    --error('There is currently a bug with nThreads > 1.')
+    error('There is currently a bug with nThreads > 1.')
   end
 
   nGPU = opts.nGPU
@@ -213,6 +213,13 @@ function tablelength(T)
   return count
 end
 
+function tableContains(T, entry)
+  for i=1,#T do
+    if T[i] == entry then return true end
+  end
+  return false
+end
+
 function cat(T1, T2, dim)
   if T1:nElement() == 0 then return T2:clone() end
   if T2:nElement() == 0 then return T1:clone() end
@@ -329,7 +336,7 @@ function findModuleByName(model, name)
 end
 
 function setDropout(model, p)
-  if p == -1 then return end
+  if p == nil or p == -1 then return end
   if torch.isTypeOf(model, 'nn.Dropout') then
     model:setp(p)
   elseif model.modules then
