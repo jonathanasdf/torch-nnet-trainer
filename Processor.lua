@@ -92,10 +92,6 @@ end
 
 -- accumulate gradients in model
 function M.backward(inputs, gradOutputs, gradLayer)
-  -- TODO: hack for https://github.com/torch/nn/issues/792
-  local gradCopy = _model.gradParams:clone()
-  _model:zeroGradParameters()
-  -- TODO: hack for https://github.com/torch/nn/issues/792
   if gradLayer then
     -- feed gradients through a specific layer
     for i=gradLayer,2,-1 do
@@ -105,9 +101,6 @@ function M.backward(inputs, gradOutputs, gradLayer)
   else
     _model:backward(inputs, gradOutputs)
   end
-  -- TODO: hack for https://github.com/torch/nn/issues/792
-  _model.gradParams:add(gradCopy)
-  -- TODO: hack for https://github.com/torch/nn/issues/792
   _model.needsSync[1] = 1
 end
 
