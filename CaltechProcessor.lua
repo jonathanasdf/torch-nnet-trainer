@@ -72,11 +72,11 @@ function M:__init(model, processorOpts)
     if not(opts.testing) then
       error('drawROC can only be used with Forward.lua')
     end
-    if nThreads > 1 then
-      error('sorry, drawROC can only be used with nThreads <= 1')
-    end
     if opts.epochSize ~= -1 then
       error('sorry, drawROC can only be used with epochSize == -1')
+    end
+    if nThreads > 1 then
+      error('sorry, drawROC can only be used with nThreads <= 1')
     end
     if not(opts.resume) or opts.resume == '' then
       if paths.dir(self.processorOpts.drawROC) ~= nil then
@@ -170,6 +170,7 @@ function M:processStats(phase)
   end
 
   if self.processorOpts.drawROC ~= '' then
+     print("Preparing data for drawing ROC...")
      local dir = processorOpts.drawROC .. '/res/'
      -- remove duplicate boxes
      for file, attr in dirtree(dir) do
@@ -183,6 +184,15 @@ function M:processStats(phase)
        if opts.input[i]:find('val') then has['val'] = 1 end
        if opts.input[i]:find('test') then has['test'] = 1 end
      end
+
+     -- make sure all files exist
+     if has['val'] then
+       os.execute('cat /file/caltech10x/val/files.txt | awk \'{print "' .. dir .. '"$0}\' | xargs touch')
+     end
+     if has['test'] then
+       os.execute('cat /file/caltech10x/test/files.txt | awk \'{print "' .. dir .. '"$0}\' | xargs touch')
+     end
+
      local dataName
      for k,_ in pairs(has) do
        if not(dataName) then
@@ -193,6 +203,7 @@ function M:processStats(phase)
      end
      dataName = dataName .. '}'
      local cmd = "cd /file/caltech; dbEval('" .. self.processorOpts.drawROC .. "', " .. dataName .. ", '" .. self.processorOpts.name .. "')"
+     print("Running MATLAB script...")
      print(runMatlab(cmd))
      print(readAll(self.processorOpts.drawROC .. '/eval/RocReasonable.txt'))
   end
@@ -207,9 +218,7 @@ function M.forward(inputs, deterministic)
   return outputs
 end
 
-function M.test(pathNames, inputs)
-  local loss, total, stats = Processor.test(pathNames, inputs)
-
+function M.drawROC(pathNames, values)
   if processorOpts.drawROC ~= '' then
     for i=1,#pathNames do
       local path = pathNames[i]
@@ -221,10 +230,15 @@ function M.test(pathNames, inputs)
       if not(file) then error(err) end
 
       local boxes = _processor.boxes[paths.basename(path)]
-      file:write(boxes[1], ' ',  boxes[2], ' ', boxes[3]-boxes[1]+1, ' ', boxes[4]-boxes[2]+1, ' ', stats[1][i], '\n')
+      file:write(boxes[1], ' ',  boxes[2], ' ', boxes[3]-boxes[1]+1, ' ', boxes[4]-boxes[2]+1, ' ', values[i], '\n')
       file:close()
     end
   end
+end
+
+function M.test(pathNames, inputs)
+  local loss, total, stats = Processor.test(pathNames, inputs)
+  _processor.drawROC(pathNames, stats[1])
   return loss, total, stats
 end
 
