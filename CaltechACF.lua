@@ -1,19 +1,17 @@
-require 'hdf5'
+require 'torchzlib'
 
 local Transforms = require 'Transforms'
-local CaltechProcessor2 = require 'CaltechProcessor2'
-local M = torch.class('CaltechACFProcessor', 'CaltechProcessor2')
+local CaltechProcessor = require 'CaltechProcessor'
+local M = torch.class('CaltechACFProcessor', 'CaltechProcessor')
 
 function M:__init(model, processorOpts)
-  CaltechProcessor2.__init(self, model, processorOpts)
+  CaltechProcessor.__init(self, model, processorOpts)
 end
 
 function M.preprocess(path, isTraining, processorOpts)
-  local dir = paths.dirname(paths.dirname(path)) .. '/acf/'
+  local dir = paths.dirname(paths.dirname(path)) .. '/acft7/'
   local name = paths.basename(path, '.png')
-  local f = hdf5.open(dir .. name .. '.h5', 'r')
-  local imgs = f:read('/img'):all()
-  f:close()
+  local imgs = torch.load(dir .. name .. '.t7'):decompress()
 
   local sz = processorOpts.imageSize
   if imgs:size(2) ~= sz or imgs:size(3) ~= sz then

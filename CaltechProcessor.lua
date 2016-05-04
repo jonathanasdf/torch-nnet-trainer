@@ -36,7 +36,7 @@ function M:__init(model, processorOpts)
   matio.use_lua_strings = true
   local boxes = {
     matio.load('/file/caltech10x/val/box.mat'),
-    matio.load('/file/caltech10x/test/box.mat')
+    matio.load('/file/caltech10x/test5/box.mat')
   }
   self.boxes = {}
   for i=1,#boxes do
@@ -230,7 +230,7 @@ function M.drawROC(pathNames, values)
       if not(file) then error(err) end
 
       local boxes = _processor.boxes[paths.basename(path)]
-      file:write(boxes[1], ' ',  boxes[2], ' ', boxes[3]-boxes[1]+1, ' ', boxes[4]-boxes[2]+1, ' ', values[i], '\n')
+      file:write(boxes[1]-1, ' ',  boxes[2]-1, ' ', boxes[3]-boxes[1]+1, ' ', boxes[4]-boxes[2]+1, ' ', values[i], '\n')
       file:close()
     end
   end
