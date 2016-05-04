@@ -6,7 +6,13 @@ require 'Model'
 local cmd = torch.CmdLine()
 cmd:argument('-model', 'model to load')
 cmd:argument('-input', 'input file or folder')
+cmd:argument(
+    '-processor',
+    'REQUIRED. lua file that does the heavy lifting. ' ..
+    'See processor.lua for functions that can be defined.\n'
+  )
 defineBaseOptions(cmd)     --defined in utils.lua
+cmd:option('-processorOpts', '', 'additional options for the processor')
 cmd:option('-noshuffle', false, 'if true then forward in order')
 cmd:option('-cacheEvery', 10, 'save forwarding stats every n batches')
 cmd:option('-resume', '', 'resume forwarding from saved state. Command must be identical')

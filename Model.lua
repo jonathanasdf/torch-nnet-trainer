@@ -61,6 +61,10 @@ function M:load(path)
   end
 end
 
+function M:get(index)
+  return self.model:get(index)
+end
+
 function M:forward(inputs, deterministic)
   if deterministic then
     self:evaluate()

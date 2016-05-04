@@ -95,9 +95,9 @@ function M.backward(inputs, gradOutputs, gradLayer)
   if gradLayer then
     -- feed gradients through a specific layer
     for i=gradLayer,2,-1 do
-      gradOutputs = _model.model:get(i):backward(_model.model:get(i-1).output, gradOutputs)
+      gradOutputs = _model:get(i):backward(_model:get(i-1).output, gradOutputs)
     end
-    _model.model:get(1):backward(inputs, gradOutputs)
+    _model:get(1):backward(inputs, gradOutputs)
   else
     _model:backward(inputs, gradOutputs)
   end

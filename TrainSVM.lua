@@ -10,7 +10,13 @@ local cmd = torch.CmdLine()
 cmd:argument('-model', 'model to train')
 cmd:argument('-input', 'input file or folder')
 cmd:argument('-output', 'path to save trained model')
---defined in utils.lua
+cmd:argument(
+    '-processor',
+    'REQUIRED. lua file that does the heavy lifting. ' ..
+    'See processor.lua for functions that can be defined.\n'
+  )
+defineBaseOptions(cmd)     --defined in utils.lua
+cmd:option('-processorOpts', '', 'additional options for the processor')
 defineBaseOptions(cmd)
 cmd:option('-layer', 'fc7', 'layer to train svm from')
 processArgs(cmd)
