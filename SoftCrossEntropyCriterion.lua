@@ -2,10 +2,14 @@ local SoftCrossEntropyCriterion, parent = torch.class('SoftCrossEntropyCriterion
 
 -- Input: Logits. Calculates cross entropy loss L=-sum(sm(target, T) log sm(inputs, T))
 -- where sm(z, T) = exp(z/T) / sum(exp(z/T))
-function SoftCrossEntropyCriterion:__init(temperature)
+function SoftCrossEntropyCriterion:__init(temperature, sizeAverage)
   parent.__init(self)
   self.temperature = temperature
-  self.sizeAverage = true
+  if sizeAverage ~= nil then
+    self.sizeAverage = sizeAverage
+  else
+    self.sizeAverage = true
+  end
 end
 
 local function sm(input)

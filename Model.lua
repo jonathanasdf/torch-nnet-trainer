@@ -1,5 +1,3 @@
-require 'cudnn'
-require 'cunn'
 require 'dpnn'
 require 'gnuplot'
 require 'paths'
@@ -59,6 +57,10 @@ function M:load(path)
   if nGPU > 0 then
     self.model = self.model:cuda()
   end
+end
+
+function M:get(index)
+  return self.model:get(index)
 end
 
 function M:forward(inputs, deterministic)

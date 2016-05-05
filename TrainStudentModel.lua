@@ -14,7 +14,13 @@ cmd:argument('-teacher', 'teacher model to load')
 cmd:argument('-student', 'student model to train')
 cmd:argument('-input', 'input file or folder')
 cmd:argument('-output', 'path to save trained student model')
+cmd:argument(
+    '-processor',
+    'REQUIRED. lua file that does the heavy lifting. ' ..
+    'See processor.lua for functions that can be defined.\n'
+  )
 defineBaseOptions(cmd)     --defined in utils.lua
+cmd:option('-processorOpts', '', 'additional options for the processor')
 defineTrainingOptions(cmd) --defined in train.lua
 cmd:option('-teacherProcessor', '', 'alternate processor for teacher model. Only the preprocess function is used')
 cmd:option('-teacherProcessorOpts', '', 'alternate processor options for teacher model')
@@ -22,10 +28,15 @@ cmd:option('-matchLayer', 2, 'which layers to match outputs, counting from the e
 cmd:option('-useMSE', false, 'use mean squared error instead of soft cross entropy')
 cmd:option('-T', 2, 'temperature for soft cross entropy')
 cmd:option('-lambda', 0.5, 'hard target relative weight')
+cmd:option('-dropoutBayes', 1, 'forward multiple time to achieve dropout as Bayesian approximation')
+cmd:option('-epsilon', 0.1, 'prevent variance in dropout as Bayesian to become 0')
 processArgs(cmd)
 
 assert(paths.filep(opts.teacher), 'Cannot find teacher model ' .. opts.teacher)
 assert(paths.filep(opts.student), 'Cannot find student model ' .. opts.student)
+if opts.nThreads > 1 then
+  error('There is currently a bug with nThreads > 1.')
+end
 
 local criterion = opts.useMSE and nn.MSECriterion(false) or SoftCrossEntropyCriterion(opts.T, false)
 if nGPU > 0 then
@@ -46,7 +57,7 @@ for i=studentProcessor.studentLayer+1,#student.model.modules do
 end
 studentProcessor.teacherLayer = #teacher.model.modules - opts.matchLayer + 1
 for i=studentProcessor.teacherLayer+1,#teacher.model.modules do
-  student.model:add(teacher.model:get(i):clone())
+  student.model:add(teacher:get(i):clone())
 end
 studentProcessor.lambda = opts.lambda
 studentProcessor:initializeThreads()
@@ -100,6 +111,10 @@ end
 
 
 local function train(pathNames, studentInputs)
+  if softCriterion.sizeAverage ~= false or _processor.criterion.sizeAverage ~= false then
+    error('this function assumes criterion.sizeAverage == false because we divide through by batchCount.')
+  end
+
   local labels = _processor.getLabels(pathNames)
   if nGPU > 0 and not(studentInputs.getDevice) then studentInputs = studentInputs:cuda() end
   if nGPU > 0 and not(labels.getDevice) then labels = labels:cuda() end
@@ -111,17 +126,54 @@ local function train(pathNames, studentInputs)
   end
 
   teacherMutex:lock()
-  _teacher:forward(teacherInputs, true)
-  local teacherLayerOutputs = _teacher.model:get(_processor.teacherLayer).output:clone()
+  local teacherLayerOutputs, variance=1
+  if opts.dropoutBayes > 1 then
+    _teacher:training()
+    _teacher:forward(teacherInputs)
+    mean = _teacher:get(_processor.teacherLayer).output
+    sumsqr = torch.cmul(mean, mean)
+
+    -- TODO: hard coded number for resnet-34 teacher
+    local l = _processor.teacherLayer-3
+    local out_init = _teacher:get(l).output
+
+    --print('######## out_init ########')
+    --print(#out_init);
+
+    for i=2,opts.dropoutBayes do
+      print(i)
+      --_teacher:forward(teacherInputs)
+      --local out = _teacher:get(_processor.teacherLayer).output:clone()
+      local out = out_init
+      for j=l,processor.teacherLayer do
+        out = _teacher:get(j):forward(out)
+      end
+      mean = mean + out
+      sumsqr = sumsqr + torch.cmul(out,out)
+    end
+    sumsqr = sumsqr/opts.dropoutBayes
+    teacherLayerOutputs = mean/opts.dropoutBayes
+    variance = sumsqr - torch.cmul(teacherLayerOutputs,teacherLayerOutputs) + opts.epsilon
+
+    --print('######## mean ########')
+    --print(teacherLayerOutputs)
+
+    --print('######## variance ########')
+    --print(variance)
+  else
+    _teacher:forward(teacherInputs, true)
+    teacherLayerOutputs = _teacher:get(_processor.teacherLayer).output:clone()
+  end
   teacherMutex:unlock()
 
   mutex:lock()
 
-  local studentOutputs = _model:forward(studentInputs)
-  local studentLayerOutputs = _model.model:get(_processor.studentLayer).output
+  local studentOutputs = _processor.forward(studentInputs)
+  local studentLayerOutputs = _model:get(_processor.studentLayer).output
 
   local softLoss = softCriterion:forward(studentLayerOutputs, teacherLayerOutputs)
   local softGradOutputs = softCriterion:backward(studentLayerOutputs, teacherLayerOutputs)
+  softGradOutputs = torch.cdiv(softGradOutputs, variance)
   _processor.backward(studentInputs, softGradOutputs / opts.batchCount, _processor.studentLayer)
 
   -- Hard labels

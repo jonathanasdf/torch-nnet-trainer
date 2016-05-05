@@ -1,5 +1,7 @@
 Check why multithread preprocess is not faster
+Use original Piotr Dollar MATLAB Caltech evaluation code
 Count flops
+Fix nThreads > 1
 Allow for customization of sgd strategy
 Add hard negative mining to TrainSVM.lua
 Add README and upload to github?

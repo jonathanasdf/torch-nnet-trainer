@@ -1,14 +1,8 @@
 function defineBaseOptions(cmd)
-  cmd:argument(
-    '-processor',
-    'REQUIRED. lua file that does the heavy lifting. ' ..
-    'See processor.lua for functions that can be defined.\n'
-  )
-  cmd:option('-processorOpts', '', 'additional options for the processor')
   cmd:option('-batchSize', 32, 'batch size')
   cmd:option('-epochSize', -1, 'num batches per epochs. -1 means run all available data once')
   cmd:option('-dropout', -1, 'dropout probability. -1 means leave it untouched')
-  cmd:option('-nThreads', 4, 'number of worker threads')
+  cmd:option('-nThreads', 1, 'number of worker threads')
   cmd:option('-nGPU', 1, 'number of GPU to use. Set to -1 to use CPU')
 end
 
@@ -38,10 +32,6 @@ function processArgs(cmd)
   if opts.nGPU == 0 then
     error('nGPU should not be 0. Please set nGPU to -1 if you want to use CPU.')
   end
-  if opts.processor == '' then
-    error('A processor must be supplied.')
-  end
-
   opts.pid = require("posix").getpid("pid")
   print("Process", opts.pid, "started!")
 
@@ -54,10 +44,6 @@ function processArgs(cmd)
       opts.nThreads = opts.nGPU-1
       print('Not enough threads to use all gpus. Increasing nThreads to ' .. opts.nThreads)
     end
-  end
-
-  if opts.nThreads > 1 then
-    --error('There is currently a bug with nThreads > 1.')
   end
 
   nGPU = opts.nGPU
@@ -118,11 +104,14 @@ function processArgs(cmd)
       package.path = package.path .. ';/home/nvesdapu/scripts/?.lua'
 
       torch.setdefaulttensortype('torch.FloatTensor')
-      require 'cudnn'
-      require 'cunn'
       cv = require 'cv'
-      require 'cv.cudawarping'
-      require 'cv.imgcodecs'
+      if opt.nGPU > 0 then
+        require 'cudnn'
+        require 'cunn'
+        require 'cv.cudawarping'
+        require 'cv.imgcodecs'
+        require 'features'
+      end
       require 'dpnn'
       require 'draw'
       require 'fbnn'
@@ -133,7 +122,6 @@ function processArgs(cmd)
       require 'paths'
     end,
     function()
-      require 'features'
       require 'Model'
       require 'Utils'
 
@@ -143,11 +131,15 @@ function processArgs(cmd)
       ceil = math.ceil
     end,
     function()
-      cudnn.benchmark = true
       opts = opt
       nGPU = opts.nGPU
+      if nGPU > 0 then
+        cudnn.benchmark = true
+      end
       nThreads = opts.nThreads
-      requirePath(opts.processor)
+      if opts.processor then
+        requirePath(opts.processor)
+      end
     end
   }
 
@@ -211,6 +203,13 @@ function tablelength(T)
   local count = 0
   for _ in pairs(T) do count = count + 1 end
   return count
+end
+
+function tableContains(T, entry)
+  for i=1,#T do
+    if T[i] == entry then return true end
+  end
+  return false
 end
 
 function cat(T1, T2, dim)
@@ -329,7 +328,7 @@ function findModuleByName(model, name)
 end
 
 function setDropout(model, p)
-  if p == -1 then return end
+  if p == nil or p == -1 then return end
   if torch.isTypeOf(model, 'nn.Dropout') then
     model:setp(p)
   elseif model.modules then

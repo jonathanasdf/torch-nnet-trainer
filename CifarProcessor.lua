@@ -1,8 +1,15 @@
+require 'hdf5'
 local Processor = require 'Processor'
 local M = torch.class('CifarProcessor', 'Processor')
 
 function M:__init(model, processorOpts)
   Processor.__init(self, model, processorOpts)
+
+  local f = hdf5.open('/file/cifar10/data.h5', 'r')
+  self.processorOpts.input = f:read('/input'):all()
+  self.processorOpts.label = f:read('/label'):all()
+  f:close()
+  self.preprocessFn = bindPost(self.preprocess, self.processorOpts)
 
   self.criterion = nn.CrossEntropyCriterion(nil, false)
   if nGPU > 0 then
@@ -21,19 +28,14 @@ function M:__init(model, processorOpts)
 end
 
 function M.preprocess(path, isTraining, processorOpts)
-  local f = hdf5.open(path, 'r')
-  local data = f:read('/input'):all()
-  f:close()
-  return data
+  return processorOpts.input[tonumber(path)]
 end
 
 function M.getLabels(pathNames)
   local labels = torch.Tensor(#pathNames)
   if nGPU > 0 then labels = labels:cuda() end
   for i=1,#pathNames do
-    local f = hdf5.open(pathNames[i], 'r')
-    labels[i] = f:read('/label'):all()
-    f:close()
+    labels[i] = processorOpts.label[tonumber(pathNames[i])]
   end
   return labels
 end

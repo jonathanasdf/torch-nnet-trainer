@@ -18,9 +18,9 @@ end
 function M:initializeThreads()
   print("Copying models to threads...")
   self.model.needsSync = torch.ByteTensor{0}
+  self.model:zeroGradParameters()
   gpu = 1
   _model = self.model
-  _model:zeroGradParameters()
   _processor = self
   processorOpts = self.processorOpts
   if nThreads == 0 then
@@ -45,6 +45,7 @@ function M:initializeThreads()
     if device ~= 1 then
       cutorch.setDevice(device)
       localModel = localModel:clone()
+      localModel:zeroGradParameters()
       localModel.params, localModel.gradParams = localModel:getParameters()
       if localCriterion then localCriterion = localCriterion:clone() end
     end
@@ -94,9 +95,9 @@ function M.backward(inputs, gradOutputs, gradLayer)
   if gradLayer then
     -- feed gradients through a specific layer
     for i=gradLayer,2,-1 do
-      gradOutputs = _model.model:get(i):backward(_model.model:get(i-1).output, gradOutputs)
+      gradOutputs = _model:get(i):backward(_model:get(i-1).output, gradOutputs)
     end
-    _model.model:get(1):backward(inputs, gradOutputs)
+    _model:get(1):backward(inputs, gradOutputs)
   else
     _model:backward(inputs, gradOutputs)
   end
@@ -171,7 +172,6 @@ function M.testWithLabels(pathNames, inputs, labels)
   mutex:lock()
   local outputs = _processor.forward(inputs, true)
 
-  --Assumes criterion.sizeAverage = false
   local stats = _processor.calcStats(pathNames, outputs, labels)
   local loss = _processor.criterion:forward(outputs, labels)
   mutex:unlock()
