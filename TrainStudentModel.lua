@@ -28,6 +28,8 @@ cmd:option('-matchLayer', 2, 'which layers to match outputs, counting from the e
 cmd:option('-useMSE', false, 'use mean squared error instead of soft cross entropy')
 cmd:option('-T', 2, 'temperature for soft cross entropy')
 cmd:option('-lambda', 0.5, 'hard target relative weight')
+cmd:option('-dropoutBayes', 1, 'forward multiple time to achieve dropout as Bayesian approximation')
+cmd:option('-epsilon', 0.1, 'prevent variance in dropout as Bayesian to become 0')
 processArgs(cmd)
 
 assert(paths.filep(opts.teacher), 'Cannot find teacher model ' .. opts.teacher)
@@ -124,8 +126,44 @@ local function train(pathNames, studentInputs)
   end
 
   teacherMutex:lock()
-  _teacher:forward(teacherInputs, true)
-  local teacherLayerOutputs = _teacher:get(_processor.teacherLayer).output:clone()
+  local teacherLayerOutputs, variance=1
+  if opts.dropoutBayes > 1 then
+    _teacher:training()
+    _teacher:forward(teacherInputs)
+    mean = _teacher:get(_processor.teacherLayer).output
+    sumsqr = torch.cmul(mean, mean)
+
+    -- TODO: hard coded number for resnet-34 teacher
+    local l = _processor.teacherLayer-3
+    local out_init = _teacher:get(l).output
+
+    --print('######## out_init ########')
+    --print(#out_init);
+
+    for i=2,opts.dropoutBayes do
+      print(i)
+      --_teacher:forward(teacherInputs)
+      --local out = _teacher:get(_processor.teacherLayer).output:clone()
+      local out = out_init
+      for j=l,processor.teacherLayer do
+        out = _teacher:get(j):forward(out)
+      end
+      mean = mean + out
+      sumsqr = sumsqr + torch.cmul(out,out)
+    end
+    sumsqr = sumsqr/opts.dropoutBayes
+    teacherLayerOutputs = mean/opts.dropoutBayes
+    variance = sumsqr - torch.cmul(teacherLayerOutputs,teacherLayerOutputs) + opts.epsilon
+
+    --print('######## mean ########')
+    --print(teacherLayerOutputs)
+
+    --print('######## variance ########')
+    --print(variance)
+  else
+    _teacher:forward(teacherInputs, true)
+    teacherLayerOutputs = _teacher:get(_processor.teacherLayer).output:clone()
+  end
   teacherMutex:unlock()
 
   mutex:lock()
@@ -135,6 +173,7 @@ local function train(pathNames, studentInputs)
 
   local softLoss = softCriterion:forward(studentLayerOutputs, teacherLayerOutputs)
   local softGradOutputs = softCriterion:backward(studentLayerOutputs, teacherLayerOutputs)
+  softGradOutputs = torch.cdiv(softGradOutputs, variance)
   _processor.backward(studentInputs, softGradOutputs / opts.batchCount, _processor.studentLayer)
 
   -- Hard labels

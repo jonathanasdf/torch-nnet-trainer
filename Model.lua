@@ -1,5 +1,3 @@
-require 'cudnn'
-require 'cunn'
 require 'dpnn'
 require 'gnuplot'
 require 'paths'

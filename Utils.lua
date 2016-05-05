@@ -110,6 +110,7 @@ function processArgs(cmd)
         require 'cunn'
         require 'cv.cudawarping'
         require 'cv.imgcodecs'
+        require 'features'
       end
       require 'dpnn'
       require 'draw'
@@ -121,7 +122,6 @@ function processArgs(cmd)
       require 'paths'
     end,
     function()
-      require 'features'
       require 'Model'
       require 'Utils'
 
