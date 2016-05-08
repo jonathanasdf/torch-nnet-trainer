@@ -12,6 +12,8 @@ function M:__init(path)
   if nGPU == 0 then
     self.backend = 'nn'
   else
+    require 'cudnn'
+    require 'cunn'
     self.backend = 'cudnn'
     cudnn.benchmark = true
   end
@@ -220,7 +222,7 @@ end
 
 function M:save(filename)
   self:clearState()
-  torch.save(filename, self.model)
+  torch.save(filename, self.model:clone():float())
   opts.optimState.dfdx = nil
   torch.save(filename .. '.optimState', opts.optimState)
 end

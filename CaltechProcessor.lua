@@ -190,7 +190,7 @@ function M:processStats(phase)
        os.execute('cat /file/caltech10x/val/files.txt | awk \'{print "' .. dir .. '"$0}\' | xargs touch')
      end
      if has['test'] then
-       os.execute('cat /file/caltech10x/test/files.txt | awk \'{print "' .. dir .. '"$0}\' | xargs touch')
+       os.execute('cat /file/caltech10x/test5/files.txt | awk \'{print "' .. dir .. '"$0}\' | xargs touch')
      end
 
      local dataName

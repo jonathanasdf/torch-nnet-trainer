@@ -59,6 +59,7 @@ studentProcessor.teacherLayer = #teacher.model.modules - opts.matchLayer + 1
 for i=studentProcessor.teacherLayer+1,#teacher.model.modules do
   student.model:add(teacher:get(i):clone())
 end
+student.params, student.gradParams = student:getParameters()
 studentProcessor.lambda = opts.lambda
 studentProcessor:initializeThreads()
 
@@ -137,15 +138,9 @@ local function train(pathNames, studentInputs)
     local l = _processor.teacherLayer-3
     local out_init = _teacher:get(l).output
 
-    --print('######## out_init ########')
-    --print(#out_init);
-
     for i=2,opts.dropoutBayes do
-      print(i)
-      --_teacher:forward(teacherInputs)
-      --local out = _teacher:get(_processor.teacherLayer).output:clone()
       local out = out_init
-      for j=l,processor.teacherLayer do
+      for j=l,_processor.teacherLayer do
         out = _teacher:get(j):forward(out)
       end
       mean = mean + out
@@ -154,12 +149,6 @@ local function train(pathNames, studentInputs)
     sumsqr = sumsqr/opts.dropoutBayes
     teacherLayerOutputs = mean/opts.dropoutBayes
     variance = sumsqr - torch.cmul(teacherLayerOutputs,teacherLayerOutputs) + opts.epsilon
-
-    --print('######## mean ########')
-    --print(teacherLayerOutputs)
-
-    --print('######## variance ########')
-    --print(variance)
   else
     _teacher:forward(teacherInputs, true)
     teacherLayerOutputs = _teacher:get(_processor.teacherLayer).output:clone()
@@ -173,7 +162,9 @@ local function train(pathNames, studentInputs)
 
   local softLoss = softCriterion:forward(studentLayerOutputs, teacherLayerOutputs)
   local softGradOutputs = softCriterion:backward(studentLayerOutputs, teacherLayerOutputs)
-  softGradOutputs = torch.cdiv(softGradOutputs, variance)
+  if opts.dropoutBayes > 1 then
+    softGradOutputs = torch.cdiv(softGradOutputs, variance)
+  end
   _processor.backward(studentInputs, softGradOutputs / opts.batchCount, _processor.studentLayer)
 
   -- Hard labels
