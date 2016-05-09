@@ -62,5 +62,5 @@ if opts.cacheEvery ~= -1 then
   state.stats = processor.stats
   torch.save(opts.cacheFile, state)
 end
-print(processor:processStats())
+print(processor:processStats('test'))
 print()
