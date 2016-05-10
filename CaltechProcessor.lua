@@ -48,27 +48,10 @@ function M:__init(model, processorOpts)
     end
   end
 
-  if opts.logdir and opts.epochs then
-    self.trainGraph = gnuplot.pngfigure(opts.logdir .. 'train.png')
-    gnuplot.xlabel('epoch')
-    gnuplot.ylabel('acc')
-    gnuplot.grid(true)
-    self.trainPosAcc = torch.Tensor(opts.epochs)
-    self.trainNegAcc = torch.Tensor(opts.epochs)
-    self.trainAcc = torch.Tensor(opts.epochs)
-
-    if opts.val then
-      self.valGraph = gnuplot.pngfigure(opts.logdir .. 'val.png')
-      gnuplot.xlabel('epoch')
-      gnuplot.ylabel('acc')
-      gnuplot.grid(true)
-      self.valPosAcc = torch.Tensor(opts.epochs)
-      self.valNegAcc = torch.Tensor(opts.epochs)
-      self.valAcc = torch.Tensor(opts.epochs)
-    end
-  end
-
   if self.processorOpts.drawROC ~= '' then
+    if string.sub(self.processorOpts.drawROC, 1, 1) ~= '/' then
+      self.processorOpts.drawROC = paths.concat(paths.cwd(), self.processorOpts.drawROC)
+    end
     if opts.testing then
       if opts.epochSize ~= -1 then
         error('sorry, drawROC can only be used with epochSize == -1')
@@ -102,6 +85,34 @@ function M:__init(model, processorOpts)
       self.processorOpts.drawROCDir = self.processorOpts.drawROC .. '/res/'
       os.execute('cat /file/caltech10x/val/dirs.txt | awk \'{print "' .. self.processorOpts.drawROCDir .. '"$0}\' | xargs mkdir -p')
       os.execute('cat /file/caltech10x/test5/dirs.txt | awk \'{print "' .. self.processorOpts.drawROCDir .. '"$0}\' | xargs mkdir -p')
+    end
+  end
+
+  if opts.logdir and opts.epochs then
+    self.trainGraph = gnuplot.pngfigure(opts.logdir .. 'train.png')
+    gnuplot.xlabel('epoch')
+    gnuplot.ylabel('acc')
+    gnuplot.grid(true)
+    self.trainPosAcc = torch.Tensor(opts.epochs)
+    self.trainNegAcc = torch.Tensor(opts.epochs)
+    self.trainAcc = torch.Tensor(opts.epochs)
+
+    if opts.val then
+      self.valGraph = gnuplot.pngfigure(opts.logdir .. 'val.png')
+      gnuplot.xlabel('epoch')
+      gnuplot.ylabel('acc')
+      gnuplot.grid(true)
+      self.valPosAcc = torch.Tensor(opts.epochs)
+      self.valNegAcc = torch.Tensor(opts.epochs)
+      self.valAcc = torch.Tensor(opts.epochs)
+
+      if self.processorOpts.drawROC ~= '' then
+        self.valROCGraph = gnuplot.pngfigure(opts.logdir .. 'val-logavgmiss.png')
+        gnuplot.xlabel('epoch')
+        gnuplot.ylabel('log-average miss rate')
+        gnuplot.grid(true)
+        self.valROC = torch.Tensor(opts.epochs)
+      end
     end
   end
 end
@@ -172,27 +183,8 @@ end
 
 function M:processStats(phase)
   assert(phase == 'train' or phase == 'test' or phase == 'val')
-  self.stats:updateValids()
-  if phase == 'train' and self.trainGraph then
-    self.trainPosAcc[opts.epoch] = self.stats.valids[1]
-    self.trainNegAcc[opts.epoch] = self.stats.valids[2]
-    self.trainAcc[opts.epoch] = self.stats.averageValid
 
-    local x = torch.range(1, opts.epoch):long()
-    gnuplot.figure(self.trainGraph)
-    gnuplot.plot({'pos', x, self.trainPosAcc:index(1, x), '+-'}, {'neg', x, self.trainNegAcc:index(1, x), '+-'}, {'overall', x, self.trainAcc:index(1, x), '-'})
-    gnuplot.plotflush()
-  elseif phase == 'val' and self.valGraph and opts.epoch >= opts.valEvery then
-    self.valPosAcc[opts.epoch] = self.stats.valids[1]
-    self.valNegAcc[opts.epoch] = self.stats.valids[2]
-    self.valAcc[opts.epoch] = self.stats.averageValid
-
-    local x = torch.range(opts.valEvery, opts.epoch, opts.valEvery):long()
-    gnuplot.figure(self.valGraph)
-    gnuplot.plot({'pos', x, self.valPosAcc:index(1, x), '+-'}, {'neg', x, self.valNegAcc:index(1, x), '+-'}, {'overall', x, self.valAcc:index(1, x), '-'})
-    gnuplot.plotflush()
-  end
-
+  local ROC
   if phase ~= 'train' and self.processorOpts.drawROC ~= '' then
     print("Preparing data for drawing ROC...")
     -- remove duplicate boxes
@@ -201,6 +193,10 @@ function M:processStats(phase)
         os.execute("gawk -i inplace '!a[$0]++' " .. file)
       end
     end
+
+    -- remove cache files
+    os.execute('rm -f ' .. self.processorOpts.drawROC .. '/eval/dt*.mat')
+    os.execute('rm -f ' .. self.processorOpts.drawROC .. '/eval/ev*.mat')
 
     local has = {}
     local inputs
@@ -231,9 +227,43 @@ function M:processStats(phase)
       cmd = "cd /file/caltech; dbEvalVal('" .. self.processorOpts.drawROC .. "', " .. dataName .. ")"
     end
     print("Running MATLAB script...")
-    runMatlab(cmd)
-    print(readAll(self.processorOpts.drawROC .. '/eval/RocReasonable.txt'))
+    print(runMatlab(cmd))
+    local result = readAll(self.processorOpts.drawROC .. '/eval/RocReasonable.txt')
+    print(result)
+    ROC = string.sub(result, 8)
   end
+
+  self.stats:updateValids()
+  if phase == 'train' and self.trainGraph then
+    self.trainPosAcc[opts.epoch] = self.stats.valids[1]
+    self.trainNegAcc[opts.epoch] = self.stats.valids[2]
+    self.trainAcc[opts.epoch] = self.stats.averageValid
+
+    local x = torch.range(1, opts.epoch):long()
+    gnuplot.figure(self.trainGraph)
+    gnuplot.plot({'pos', x, self.trainPosAcc:index(1, x), '+-'}, {'neg', x, self.trainNegAcc:index(1, x), '+-'}, {'overall', x, self.trainAcc:index(1, x), '-'})
+    gnuplot.plotflush()
+  elseif phase == 'val' and opts.epoch >= opts.valEvery then
+    if self.valGraph then
+      self.valPosAcc[opts.epoch] = self.stats.valids[1]
+      self.valNegAcc[opts.epoch] = self.stats.valids[2]
+      self.valAcc[opts.epoch] = self.stats.averageValid
+
+      local x = torch.range(opts.valEvery, opts.epoch, opts.valEvery):long()
+      gnuplot.figure(self.valGraph)
+      gnuplot.plot({'pos', x, self.valPosAcc:index(1, x), '+-'}, {'neg', x, self.valNegAcc:index(1, x), '+-'}, {'overall', x, self.valAcc:index(1, x), '-'})
+      gnuplot.plotflush()
+    end
+    if self.valROCGraph then
+      self.valROC[opts.epoch] = tonumber(ROC)
+
+      local x = torch.range(opts.valEvery, opts.epoch, opts.valEvery):long()
+      gnuplot.figure(self.valROCGraph)
+      gnuplot.plot({'result', x, self.valROC:index(1, x), '+-'})
+      gnuplot.plotflush()
+    end
+  end
+
   return tostring(self.stats)
 end
 
