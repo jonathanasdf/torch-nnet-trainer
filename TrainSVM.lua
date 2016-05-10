@@ -22,6 +22,7 @@ cmd:option('-layer', 'fc7', 'layer to train svm from')
 processArgs(cmd)
 
 assert(paths.filep(opts.model), 'Cannot find model ' .. opts.model)
+assert(paths.filep(opts.processor), 'Cannot find processor ' .. opts.processor)
 
 local model = Model(opts.model)
 local processor = requirePath(opts.processor).new(model, opts.processorOpts)
