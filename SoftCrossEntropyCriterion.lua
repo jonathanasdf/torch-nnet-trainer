@@ -39,10 +39,6 @@ function SoftCrossEntropyCriterion:updateOutput(input, target)
   return self.output
 end
 
-local function calcGrad(input, target, temperature)
-  return
-end
-
 function SoftCrossEntropyCriterion:updateGradInput(input, target)
   self.gradInput:resizeAs(input)
 

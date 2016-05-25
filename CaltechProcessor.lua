@@ -48,6 +48,46 @@ function M:__init(model, processorOpts)
     end
   end
 
+  if self.processorOpts.drawROC ~= '' then
+    if string.sub(self.processorOpts.drawROC, 1, 1) ~= '/' then
+      self.processorOpts.drawROC = paths.concat(paths.cwd(), self.processorOpts.drawROC)
+    end
+    if opts.testing then
+      if opts.epochSize ~= -1 then
+        error('sorry, drawROC can only be used with epochSize == -1')
+      end
+    else -- val
+      if opts.val == '' then
+        error('drawROC specified without validation data?')
+      elseif opts.valSize ~= -1 then
+        error('sorry, drawROC can only be used with valSize == -1')
+      end
+    end
+
+    if nThreads > 1 then
+      error('sorry, drawROC can only be used with nThreads <= 1')
+    end
+    if not(opts.resume) or opts.resume == '' then
+      if paths.dir(self.processorOpts.drawROC) ~= nil then
+        local answer
+        repeat
+          print('Warning: drawROC directory exists! Continue (y/n)?')
+          answer=io.read()
+        until answer=="y" or answer=="n"
+        if answer == "n" then
+          error('drawROC directory exists! Aborting.')
+        end
+      else
+        paths.mkdir(self.processorOpts.drawROC)
+      end
+      -- make sure all files exist
+      print('Preparing drawROC directory.')
+      self.processorOpts.drawROCDir = self.processorOpts.drawROC .. '/res/'
+      os.execute('cat /file/caltech10x/val/dirs.txt | awk \'{print "' .. self.processorOpts.drawROCDir .. '"$0}\' | xargs mkdir -p')
+      os.execute('cat /file/caltech10x/test5/dirs.txt | awk \'{print "' .. self.processorOpts.drawROCDir .. '"$0}\' | xargs mkdir -p')
+    end
+  end
+
   if opts.logdir and opts.epochs then
     self.trainGraph = gnuplot.pngfigure(opts.logdir .. 'train.png')
     gnuplot.xlabel('epoch')
@@ -65,24 +105,14 @@ function M:__init(model, processorOpts)
       self.valPosAcc = torch.Tensor(opts.epochs)
       self.valNegAcc = torch.Tensor(opts.epochs)
       self.valAcc = torch.Tensor(opts.epochs)
-    end
-  end
 
-  if self.processorOpts.drawROC ~= '' then
-    if not(opts.testing) then
-      error('drawROC can only be used with Forward.lua')
-    end
-    if opts.epochSize ~= -1 then
-      error('sorry, drawROC can only be used with epochSize == -1')
-    end
-    if nThreads > 1 then
-      error('sorry, drawROC can only be used with nThreads <= 1')
-    end
-    if not(opts.resume) or opts.resume == '' then
-      if paths.dir(self.processorOpts.drawROC) ~= nil then
-        error('drawROC directory exists! Aborting')
+      if self.processorOpts.drawROC ~= '' then
+        self.valROCGraph = gnuplot.pngfigure(opts.logdir .. 'val-logavgmiss.png')
+        gnuplot.xlabel('epoch')
+        gnuplot.ylabel('log-average miss rate')
+        gnuplot.grid(true)
+        self.valROC = torch.Tensor(opts.epochs)
       end
-      paths.mkdir(self.processorOpts.drawROC)
     end
   end
 end
@@ -141,6 +171,10 @@ end
 
 function M:resetStats()
   self.stats = optim.ConfusionMatrix({'no person', 'person'})
+  if self.processorOpts.drawROC ~= '' then
+    os.execute('cat /file/caltech10x/val/files.txt | awk \'{print "' .. self.processorOpts.drawROCDir .. '"$0}\' | xargs truncate -s 0')
+    os.execute('cat /file/caltech10x/test5/files.txt | awk \'{print "' .. self.processorOpts.drawROCDir .. '"$0}\' | xargs truncate -s 0')
+  end
 end
 
 function M:accStats(new_stats)
@@ -148,6 +182,57 @@ function M:accStats(new_stats)
 end
 
 function M:processStats(phase)
+  assert(phase == 'train' or phase == 'test' or phase == 'val')
+
+  local ROC
+  if phase ~= 'train' and self.processorOpts.drawROC ~= '' then
+    print("Preparing data for drawing ROC...")
+    -- remove duplicate boxes
+    for file, attr in dirtree(self.processorOpts.drawROCDir) do
+      if attr.mode == 'file' and attr.size > 0 then
+        os.execute("gawk -i inplace '!a[$0]++' " .. file)
+      end
+    end
+
+    -- remove cache files
+    os.execute('rm -f ' .. self.processorOpts.drawROC .. '/eval/dt*.mat')
+    os.execute('rm -f ' .. self.processorOpts.drawROC .. '/eval/ev*.mat')
+
+    local has = {}
+    local inputs
+    if phase == 'test' then
+      inputs = opts.input
+    elseif phase == 'val' then
+      inputs = opts.val
+    end
+
+    for i=1,#inputs do
+      if inputs[i]:find('val') then has['val'] = 1 end
+      if inputs[i]:find('test') then has['test'] = 1 end
+    end
+
+    local dataName
+    for k,_ in pairs(has) do
+      if not(dataName) then
+        dataName = "{'" .. k .. "'"
+      else
+        dataName = dataName .. ", '" .. k .. "'"
+      end
+    end
+    dataName = dataName .. '}'
+    local cmd
+    if phase == 'test' then
+      cmd = "cd /file/caltech; dbEval('" .. self.processorOpts.drawROC .. "', " .. dataName .. ", '" .. self.processorOpts.name .. "')"
+    elseif phase == 'val' then
+      cmd = "cd /file/caltech; dbEvalVal('" .. self.processorOpts.drawROC .. "', " .. dataName .. ")"
+    end
+    print("Running MATLAB script...")
+    print(runMatlab(cmd))
+    local result = readAll(self.processorOpts.drawROC .. '/eval/RocReasonable.txt')
+    print(result)
+    ROC = string.sub(result, 8)
+  end
+
   self.stats:updateValids()
   if phase == 'train' and self.trainGraph then
     self.trainPosAcc[opts.epoch] = self.stats.valids[1]
@@ -158,55 +243,27 @@ function M:processStats(phase)
     gnuplot.figure(self.trainGraph)
     gnuplot.plot({'pos', x, self.trainPosAcc:index(1, x), '+-'}, {'neg', x, self.trainNegAcc:index(1, x), '+-'}, {'overall', x, self.trainAcc:index(1, x), '-'})
     gnuplot.plotflush()
-  elseif phase == 'val' and self.valGraph and opts.epoch >= opts.valEvery then
-    self.valPosAcc[opts.epoch] = self.stats.valids[1]
-    self.valNegAcc[opts.epoch] = self.stats.valids[2]
-    self.valAcc[opts.epoch] = self.stats.averageValid
+  elseif phase == 'val' and opts.epoch >= opts.valEvery then
+    if self.valGraph then
+      self.valPosAcc[opts.epoch] = self.stats.valids[1]
+      self.valNegAcc[opts.epoch] = self.stats.valids[2]
+      self.valAcc[opts.epoch] = self.stats.averageValid
 
-    local x = torch.range(opts.valEvery, opts.epoch, opts.valEvery):long()
-    gnuplot.figure(self.valGraph)
-    gnuplot.plot({'pos', x, self.valPosAcc:index(1, x), '+-'}, {'neg', x, self.valNegAcc:index(1, x), '+-'}, {'overall', x, self.valAcc:index(1, x), '-'})
-    gnuplot.plotflush()
+      local x = torch.range(opts.valEvery, opts.epoch, opts.valEvery):long()
+      gnuplot.figure(self.valGraph)
+      gnuplot.plot({'pos', x, self.valPosAcc:index(1, x), '+-'}, {'neg', x, self.valNegAcc:index(1, x), '+-'}, {'overall', x, self.valAcc:index(1, x), '-'})
+      gnuplot.plotflush()
+    end
+    if self.valROCGraph then
+      self.valROC[opts.epoch] = tonumber(ROC)
+
+      local x = torch.range(opts.valEvery, opts.epoch, opts.valEvery):long()
+      gnuplot.figure(self.valROCGraph)
+      gnuplot.plot({'result', x, self.valROC:index(1, x), '+-'})
+      gnuplot.plotflush()
+    end
   end
 
-  if self.processorOpts.drawROC ~= '' then
-     print("Preparing data for drawing ROC...")
-     local dir = processorOpts.drawROC .. '/res/'
-     -- remove duplicate boxes
-     for file, attr in dirtree(dir) do
-       if attr.mode == 'file' then
-         os.execute("gawk -i inplace '!a[$0]++' " .. file)
-       end
-     end
-
-     local has = {}
-     for i=1,#opts.input do
-       if opts.input[i]:find('val') then has['val'] = 1 end
-       if opts.input[i]:find('test') then has['test'] = 1 end
-     end
-
-     -- make sure all files exist
-     if has['val'] then
-       os.execute('cat /file/caltech10x/val/files.txt | awk \'{print "' .. dir .. '"$0}\' | xargs touch')
-     end
-     if has['test'] then
-       os.execute('cat /file/caltech10x/test/files.txt | awk \'{print "' .. dir .. '"$0}\' | xargs touch')
-     end
-
-     local dataName
-     for k,_ in pairs(has) do
-       if not(dataName) then
-         dataName = "{'" .. k .. "'"
-       else
-         dataName = dataName .. ", '" .. k .. "'"
-       end
-     end
-     dataName = dataName .. '}'
-     local cmd = "cd /file/caltech; dbEval('" .. self.processorOpts.drawROC .. "', " .. dataName .. ", '" .. self.processorOpts.name .. "')"
-     print("Running MATLAB script...")
-     print(runMatlab(cmd))
-     print(readAll(self.processorOpts.drawROC .. '/eval/RocReasonable.txt'))
-  end
   return tostring(self.stats)
 end
 
@@ -224,8 +281,7 @@ function M.drawROC(pathNames, values)
       local path = pathNames[i]
       local dataset, set, video, id = path:match("/file/caltech10x/(.-)/.-/raw/set(.-)_V(.-)_I(.-)_.*")
 
-      local filename = processorOpts.drawROC .. '/res/set' .. set .. '/V' .. video .. '/I' .. id .. '.txt'
-      paths.mkdir(paths.dirname(filename))
+      local filename = processorOpts.drawROCDir .. 'set' .. set .. '/V' .. video .. '/I' .. id .. '.txt'
       local file, err = io.open(filename, 'a')
       if not(file) then error(err) end
 

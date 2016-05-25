@@ -1,6 +1,10 @@
 Check why multithread preprocess is not faster
-Use original Piotr Dollar MATLAB Caltech evaluation code
+TrainStudentModel static layer # for start of dropoutBayesian: -1 means forward whole model
+Associate processors with models. CMD model specification should be "<model> <processor> [processorOpts]"
+Processor train/test return sequence of function chains for threading
+See if can make thread vars non-global by associating with model
 Count flops
+Fix TrainStudentModel with nThreads > 0
 Fix nThreads > 1
 Allow for customization of sgd strategy
 Add hard negative mining to TrainSVM.lua

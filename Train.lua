@@ -19,6 +19,7 @@ defineTrainingOptions(cmd)
 processArgs(cmd)
 
 assert(paths.filep(opts.model), 'Cannot find model ' .. opts.model)
+assert(paths.filep(opts.processor), 'Cannot find processor ' .. opts.processor)
 if opts.nThreads > 1 then
   error('There is currently a bug with nThreads > 1.')
 end

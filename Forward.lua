@@ -20,6 +20,7 @@ processArgs(cmd)
 opts.testing = true
 
 assert(paths.filep(opts.model), 'Cannot find model ' .. opts.model)
+assert(paths.filep(opts.processor), 'Cannot find processor ' .. opts.processor)
 
 local model = Model(opts.model)
 local processor = requirePath(opts.processor).new(model, opts.processorOpts)
@@ -62,5 +63,5 @@ if opts.cacheEvery ~= -1 then
   state.stats = processor.stats
   torch.save(opts.cacheFile, state)
 end
-print(processor:processStats())
+print(processor:processStats('test'))
 print()
