@@ -34,7 +34,6 @@ processArgs(cmd)
 
 assert(paths.filep(opts.teacher), 'Cannot find teacher model ' .. opts.teacher)
 assert(paths.filep(opts.student), 'Cannot find student model ' .. opts.student)
-assert(paths.filep(opts.processor), 'Cannot find processor ' .. opts.processor)
 if opts.nThreads > 1 then
   error('There is currently a bug with nThreads > 1.')
 end
@@ -47,7 +46,6 @@ end
 local teacher = Model(opts.teacher)
 local teacherProcessor
 if opts.teacherProcessor ~= '' then
-  assert(paths.filep(opts.teacherProcessor), 'Cannot find processor ' .. opts.teacherProcessor)
   teacherProcessor = requirePath(opts.teacherProcessor).new(teacher, opts.teacherProcessorOpts)
 end
 
@@ -62,6 +60,7 @@ for i=studentProcessor.teacherLayer+1,#teacher.model.modules do
   student.model:add(teacher:get(i):clone())
 end
 student.params, student.gradParams = student:getParameters()
+studentProcessor.lambda = opts.lambda
 studentProcessor:initializeThreads()
 
 
@@ -136,20 +135,14 @@ local function train(pathNames, studentInputs)
     sumsqr = torch.cmul(mean, mean)
 
     -- TODO: hard coded number for resnet-34 teacher
-    --local l = _processor.teacherLayer-3
-    --local out_init = _teacher:get(l).output
-
-    --print('######## out_init ########')
-    --print(#out_init);
+    local l = _processor.teacherLayer-3
+    local out_init = _teacher:get(l).output
 
     for i=2,opts.dropoutBayes do
-      --print(i)
-      _teacher:forward(teacherInputs)
-      local out = _teacher:get(_processor.teacherLayer).output:clone()
-      --local out = out_init
-      --for j=l,_processor.teacherLayer do
-        --out = _teacher:get(j):forward(out)
-      --end
+      local out = out_init
+      for j=l,_processor.teacherLayer do
+        out = _teacher:get(j):forward(out)
+      end
       mean = mean + out
       sumsqr = sumsqr + torch.cmul(out,out)
     end
@@ -175,9 +168,9 @@ local function train(pathNames, studentInputs)
   _processor.backward(studentInputs, softGradOutputs / opts.batchCount, _processor.studentLayer)
 
   -- Hard labels
-  local hardLoss = _processor.criterion:forward(studentOutputs, labels)*opts.lambda
+  local hardLoss = _processor.criterion:forward(studentOutputs, labels)*_processor.lambda
   local stats = _processor.calcStats(pathNames, studentOutputs, labels)
-  local hardGradOutputs = _processor.criterion:backward(studentOutputs, labels)*opts.lambda
+  local hardGradOutputs = _processor.criterion:backward(studentOutputs, labels)*_processor.lambda
   _processor.backward(studentInputs, hardGradOutputs / opts.batchCount)
 
   mutex:unlock()

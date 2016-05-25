@@ -7,6 +7,7 @@ require 'cv.imgcodecs'
 
 require 'Model'
 require 'SoftCrossEntropyCriterion'
+require 'MSECovCriterion'
 require 'Utils'
 
 local cmd = torch.CmdLine()
@@ -20,8 +21,8 @@ cmd:argument(
     'See processor.lua for functions that can be defined.\n'
   )
 defineBaseOptions(cmd)     --defined in utils.lua
-cmd:option('-processorOpts', '', 'additional options for the processor')
 defineTrainingOptions(cmd) --defined in train.lua
+cmd:option('-processorOpts', '', 'additional options for the processor')
 cmd:option('-teacherProcessor', '', 'alternate processor for teacher model. Only the preprocess function is used')
 cmd:option('-teacherProcessorOpts', '', 'alternate processor options for teacher model')
 cmd:option('-matchLayer', 2, 'which layers to match outputs, counting from the end. Defaults to second last layer (i.e. input to SoftMax layer)')
@@ -29,7 +30,7 @@ cmd:option('-useMSE', false, 'use mean squared error instead of soft cross entro
 cmd:option('-T', 2, 'temperature for soft cross entropy')
 cmd:option('-lambda', 0.5, 'hard target relative weight')
 cmd:option('-dropoutBayes', 1, 'forward multiple time to achieve dropout as Bayesian approximation')
-cmd:option('-epsilon', 0.1, 'prevent variance in dropout as Bayesian to become 0')
+cmd:option('-useCOV', false, 'use Vishnus covariance weighted error when using dropoutBayes')
 processArgs(cmd)
 
 assert(paths.filep(opts.teacher), 'Cannot find teacher model ' .. opts.teacher)
@@ -39,7 +40,17 @@ if opts.nThreads > 1 then
   error('There is currently a bug with nThreads > 1.')
 end
 
-local criterion = opts.useMSE and nn.MSECriterion(false) or SoftCrossEntropyCriterion(opts.T, false)
+local criterion
+if opts.useCOV then
+  if opts.dropoutBayes == 1 then
+    error('useCOV requires dropoutBayes. Please set useMSE if not using dropout.')
+  end
+  criterion = MSECovCriterion(false)
+elseif opts.useMSE then
+  criterion = nn.MSECriterion(false)
+else
+  criterion = SoftCrossEntropyCriterion(opts.T, false)
+end
 if nGPU > 0 then
   criterion = criterion:cuda()
 end
@@ -90,6 +101,7 @@ else
       threads:addjob(i,
         function()
           require 'SoftCrossEntropyCriterion'
+          require 'MSECovCriterion'
           if opts.teacherProcessor ~= '' then
             requirePath(opts.teacherProcessor)
           end
@@ -111,7 +123,6 @@ else
   threads:specific(specific)
 end
 
-
 local function train(pathNames, studentInputs)
   if softCriterion.sizeAverage ~= false or _processor.criterion.sizeAverage ~= false then
     error('this function assumes criterion.sizeAverage == false because we divide through by batchCount.')
@@ -128,34 +139,33 @@ local function train(pathNames, studentInputs)
   end
 
   teacherMutex:lock()
-  local teacherLayerOutputs, variance=1
+  local teacherLayerOutputs, outputs, variance=1
   if opts.dropoutBayes > 1 then
     _teacher:training()
     _teacher:forward(teacherInputs)
-    mean = _teacher:get(_processor.teacherLayer).output
-    sumsqr = torch.cmul(mean, mean)
+    local mean = _teacher:get(_processor.teacherLayer).output
+    local sumsqr = torch.cmul(mean, mean)
+    outputs = mean.new(opts.dropoutBayes, mean:size(1), mean:size(2))
+    outputs[1] = mean
 
     -- TODO: hard coded number for resnet-34 teacher
-    --local l = _processor.teacherLayer-3
-    --local out_init = _teacher:get(l).output
-
-    --print('######## out_init ########')
-    --print(#out_init);
+    local l = 10
+    local out_init = _teacher:get(l).output
 
     for i=2,opts.dropoutBayes do
-      --print(i)
-      _teacher:forward(teacherInputs)
-      local out = _teacher:get(_processor.teacherLayer).output:clone()
-      --local out = out_init
-      --for j=l,_processor.teacherLayer do
-        --out = _teacher:get(j):forward(out)
-      --end
+      local out = out_init
+      for j=l+1,_processor.teacherLayer do
+        out = _teacher:get(j):forward(out)
+      end
       mean = mean + out
-      sumsqr = sumsqr + torch.cmul(out,out)
+      sumsqr = sumsqr + torch.cmul(out, out)
+      outputs[i] = out
     end
-    sumsqr = sumsqr/opts.dropoutBayes
-    teacherLayerOutputs = mean/opts.dropoutBayes
-    variance = sumsqr - torch.cmul(teacherLayerOutputs,teacherLayerOutputs) + opts.epsilon
+    sumsqr = sumsqr / opts.dropoutBayes
+    mean = mean / opts.dropoutBayes
+    variance = sumsqr - torch.cmul(mean, mean)
+    variance = torch.cinv(torch.exp(-variance) + 1)*2 - 0.5  --pass into sigmoid function
+    teacherLayerOutputs = mean
   else
     _teacher:forward(teacherInputs, true)
     teacherLayerOutputs = _teacher:get(_processor.teacherLayer).output:clone()
@@ -167,9 +177,20 @@ local function train(pathNames, studentInputs)
   local studentOutputs = _processor.forward(studentInputs)
   local studentLayerOutputs = _model:get(_processor.studentLayer).output
 
+  if opts.useCOV then
+    local cov = teacherLayerOutputs.new(teacherLayerOutputs:size(1), teacherLayerOutputs:size(2), teacherLayerOutputs:size(2)):zero()
+    for i=1,teacherLayerOutputs:size(1) do
+      for j=1,opts.dropoutBayes do
+        local diff = (outputs[j][i] - teacherLayerOutputs[i]):view(-1, 1)
+        cov[i] = cov[i] + diff * diff:t()
+      end
+      cov[i] = (cov[i] / (opts.dropoutBayes - 1)):inverse()
+    end
+    softCriterion.invcov = cov
+  end
   local softLoss = softCriterion:forward(studentLayerOutputs, teacherLayerOutputs)
   local softGradOutputs = softCriterion:backward(studentLayerOutputs, teacherLayerOutputs)
-  if opts.dropoutBayes > 1 then
+  if opts.dropoutBayes > 1 and not(opts.useCOV) then
     softGradOutputs = torch.cdiv(softGradOutputs, variance)
   end
   _processor.backward(studentInputs, softGradOutputs / opts.batchCount, _processor.studentLayer)
