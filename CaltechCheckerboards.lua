@@ -8,17 +8,18 @@ function M:__init(model, processorOpts)
   CaltechProcessor.__init(self, model, processorOpts)
 end
 
-function M.preprocess(path, isTraining, processorOpts)
+function M:preprocess(path, pAugment)
   local dir = paths.dirname(paths.dirname(path)) .. '/chkt7/'
   local name = paths.basename(path, '.png')
   local imgs = torch.load(dir .. name .. '.t7'):decompress()
 
-  local sz = processorOpts.imageSize
+  local sz = self.processorOpts.imageSize
   if imgs:size(2) ~= sz or imgs:size(3) ~= sz then
     imgs = image.scale(imgs, sz, sz)
   end
 
-  return imgs
+  self:checkAugmentations(pAugment, nil)
+  return imgs:cuda(), nil
 end
 
 return M

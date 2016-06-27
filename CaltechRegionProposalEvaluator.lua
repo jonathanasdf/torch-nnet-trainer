@@ -9,18 +9,17 @@ function M:__init(model, processorOpts)
   end
 end
 
-function M.preprocess(path, isTraining, processorOpts)
-  return torch.Tensor(1)
+function M:preprocess()
+  return torch.Tensor(1):cuda()
 end
 
-function M.train()
+function M:train()
   error('Cannot train CaltechRegionProposalEvaluator.')
 end
 
-function M:accStats(new_stats) end
-
-function M.test(pathNames, inputs)
-  _processor.drawROC(pathNames, torch.ones(#pathNames))
+function M:test(pathNames)
+  self:drawROC(pathNames, torch.ones(#pathNames))
+  return 0, #pathNames
 end
 
 return M

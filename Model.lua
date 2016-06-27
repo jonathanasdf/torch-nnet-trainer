@@ -1,27 +1,34 @@
+require 'cudnn'
+require 'cunn'
 require 'dpnn'
 require 'gnuplot'
+require 'optim'
 require 'paths'
 
 require 'DataLoader'
 require 'Utils'
-require 'resnet'
 
+cudnn.benchmark = true
 local M, Parent = torch.class('Model', 'nn.Decorator')
 
-function M:__init(path)
-  if nGPU == 0 then
-    self.backend = 'nn'
-  else
-    require 'cudnn'
-    require 'cunn'
-    self.backend = 'cudnn'
-    cudnn.benchmark = true
+function M:__init(specStr)
+  local args = specStr:split(' ');
+  if #args < 2 then
+    error('Model specifications must be in the form: <model> <processor> [-options].')
   end
+  local path = table.remove(args, 1)
+  local processorPath = table.remove(args, 1)
 
-  if path then
-    self:load(path)
-  end
+  assert(paths.filep(path), 'Cannot find model ' .. path)
+  assert(paths.filep(processorPath), 'Cannot find processor ' .. processorPath)
+
+  self:load(path)
+
+  local processorOpts = table.concat(args, ' ')
+  self.processor = requirePath(processorPath).new(self, processorOpts)
+
   setDropout(self.model, opts.dropout)
+  self.model:zeroGradParameters()
   Parent.__init(self, self.model)
 
   print('=> Model')
@@ -31,11 +38,11 @@ function M:__init(path)
   print('Total parameters: ', self.gradParams:size(1))
 end
 
-local function loadSavedModel(filename, backend)
+local function loadSavedModel(filename)
   local model
   if paths.extname(filename) == 'caffemodel' then
     require 'loadcaffe'
-    model = loadcaffe.load(paths.dirname(filename) .. '/deploy.prototxt', filename, backend)
+    model = loadcaffe.load(paths.dirname(filename) .. '/deploy.prototxt', filename, 'cudnn')
   else
     model = torch.load(filename)
   end
@@ -47,18 +54,19 @@ function M:load(path)
   if paths.extname(path) == 'lua' then
     print('Creating model from file: ' .. path)
     self.model = paths.dofile(path)
-    if self.backend == 'cudnn' then
-      cudnn.convert(self.model, cudnn)
-    elseif self.backend ~= 'nn' then
-      error('Unsupported backend')
-    end
+    cudnn.convert(self.model, cudnn)
   else
     print('Loading model from file: ' .. path)
-    self.model = loadSavedModel(path, self.backend)
+    self.model = loadSavedModel(path)
   end
-  if nGPU > 0 then
-    self.model = self.model:cuda()
-  end
+  self.model = self.model:cuda()
+end
+
+function M:save(filename)
+  self:clearState()
+  torch.save(filename, self.model:clone():float())
+  opts.optimState.dfdx = nil
+  torch.save(filename .. '.optimState', opts.optimState)
 end
 
 function M:get(index)
@@ -74,36 +82,83 @@ function M:forward(inputs, deterministic)
   return self.model:forward(inputs)
 end
 
-local function updateModel(loss, cnt, stats)
-  _model.trainIter = _model.trainIter + 1
-  _model.loss = _model.loss + loss
-  _model.count = _model.count + cnt
-  _processor:accStats(stats)
-  if _model.trainIter % opts.updateEvery == 0 then
-    _processor:updateModel()
+function M:backward(inputs, gradOutputs, gradLayer)
+  if gradLayer then
+    -- feed gradients through a specific layer
+    for i=gradLayer,2,-1 do
+      gradOutputs = self:get(i):backward(self:get(i-1).output, gradOutputs)
+    end
+    self:get(1):backward(inputs, gradOutputs)
+  else
+    self.model:backward(inputs, gradOutputs)
   end
-  jobDone()
 end
 
-local function accValResults(loss, cnt, stats)
-  _processor:accStats(stats)
-  _model.loss = _model.loss + loss
-  _model.count = _model.count + cnt
-  jobDone()
+function M:updateModel(loss, cnt)
+  self.trainIter = self.trainIter + 1
+  self.loss = self.loss + loss
+  self.count = self.count + cnt
+  if self.trainIter % opts.updateEvery == 0 then
+    optim.sgd(function()
+                return 0, self.gradParams
+              end,
+              self.params,
+              opts.optimState)
+    self:zeroGradParameters()
+  end
+end
+
+function M:accValResults(loss, cnt)
+  self.loss = self.loss + loss
+  self.count = self.count + cnt
+end
+
+function M:run(dataloader, batchSize, epochSize, randomSample, workerFn, resultHandler, startBatch)
+  if batchSize == -1 then
+    batchSize = dataloader:size()
+  end
+
+  if epochSize == -1 then
+    epochSize = math.ceil(dataloader:size() * 1.0 / batchSize)
+  end
+  epochSize = math.min(epochSize, math.ceil(dataloader:size() * 1.0 / batchSize))
+
+  startBatch = startBatch or 1
+  if startBatch > epochSize then
+    return
+  end
+
+  local jobSize = epochSize - startBatch + 1
+  local jobsDone = 0
+  xlua.progress(jobsDone, jobSize)
+
+  local indexStart = (startBatch-1) * batchSize + 1
+  for i=startBatch,epochSize do
+    collectgarbage()
+    local indexEnd = math.min(indexStart + batchSize - 1, dataloader:size())
+    local pathNames = randomSample and dataloader:sample(batchSize) or dataloader:get(indexStart, indexEnd)
+
+    resultHandler(workerFn(pathNames))
+
+    jobsDone = jobsDone + 1
+    xlua.progress(jobsDone, jobSize)
+
+    indexStart = indexEnd + 1
+    if indexStart > dataloader:size() then
+      break
+    end
+  end
 end
 
 function M:train(trainFn, valFn)
   if not(opts.input) then
     error('Input must be defined for training.')
   end
-  if _model ~= self then
-    error('You can only train the main model.')
-  end
   if not trainFn then
-    trainFn = _processor.train
+    trainFn = self.processor.trainFn
   end
   if not valFn then
-    valFn = _processor.test
+    valFn = self.processor.testFn
   end
 
   local trainLoader = DataLoader{inputs = opts.input, weights = opts.inputWeights}
@@ -147,39 +202,38 @@ function M:train(trainFn, valFn)
   self.valLoss = torch.Tensor(opts.epochs)
   for epoch=1,opts.epochs do
     opts.epoch = epoch
-    augmentThreadState(function()
-      opts.epoch = epoch
-    end)
     print('==> training epoch # ' .. epoch)
 
+    setPhase('train')
     self.loss = 0
     self.count = 0
-    _processor:resetStats()
-    trainLoader:runAsync(opts.batchSize,
-                         opts.epochSize,
-                         true, --randomSample
-                         bindPost(_processor.preprocessFn, true),
-                         trainFn,
-                         updateModel)
+    self.processor:resetStats()
+    self:run(trainLoader,
+             opts.batchSize,
+             opts.epochSize,
+             true,  -- randomSample
+             trainFn,
+             bind(self.updateModel, self))
     self.loss = self.loss / self.count
     self.trainLoss[epoch] = self.loss
     print(string.format('  Training loss: %.6f', self.loss))
-    logprint(_processor:processStats('train'))
+    logprint(self.processor:getStats())
 
     if opts.val ~= '' and epoch % opts.valEvery == 0 then
+      setPhase('val')
       self.loss = 0
       self.count = 0
-      _processor:resetStats()
-      validLoader:runAsync(opts.valBatchSize,
-                           opts.valSize,
-                           false, --randomSample
-                           bindPost(_processor.preprocessFn, false),
-                           valFn,
-                           accValResults)
+      self.processor:resetStats()
+      self:run(validLoader,
+               opts.valBatchSize,
+               opts.valSize,
+               false,  -- randomSample
+               valFn,
+               bind(self.accValResults, self))
       self.loss = self.loss / self.count
       self.valLoss[epoch] = self.loss
       print(string.format('  Validation loss: %.6f', self.loss))
-      print(_processor:processStats('val'))
+      print(self.processor:getStats())
       print()
     end
 
@@ -208,9 +262,6 @@ function M:train(trainFn, valFn)
         if opts.keepCaches then
           os.execute('cp ' .. cachename .. ' ' .. opts.cachedir .. 'epoch' .. epoch .. '.t7')
         end
-        augmentThreadState(function()
-          _model:clearState()
-        end)
       end
     end
   end
@@ -218,13 +269,6 @@ function M:train(trainFn, valFn)
   if opts.output and opts.output ~= '' then
     self:save(opts.output)
   end
-end
-
-function M:save(filename)
-  self:clearState()
-  torch.save(filename, self.model:clone():float())
-  opts.optimState.dfdx = nil
-  torch.save(filename .. '.optimState', opts.optimState)
 end
 
 return M

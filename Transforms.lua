@@ -15,10 +15,15 @@ local M = {}
 
 function M.Compose(transforms)
    return function(input)
+      local augmentations = {}
       for _, transform in ipairs(transforms) do
-         input = transform(input)
+         input, augmentation = transform(input)
+         for k,v in pairs(augmentation) do
+           assert(augmentations[k] == nil, 'duplicate augmentation')
+           augmentations[k] = v
+         end
       end
-      return input
+      return input, augmentations
    end
 end
 
@@ -29,23 +34,62 @@ function M.ColorNormalize(meanstd)
          img[i]:add(-meanstd.mean[i])
          img[i]:div(meanstd.std[i])
       end
-      return img
+      return img, {cnorm = meanstd}
+   end
+end
+
+function M.Scale(targetW, targetH, interpolation)
+   interpolation = interpolation or 'bicubic'
+   return function(input)
+      local w, h = input:size(3), input:size(2)
+      local result
+      if w == targetW and h == targetH then
+         result = input
+      else
+         result = image.scale(input, targetW, targetH, interpolation)
+      end
+      return result, {scale = {targetW, targetH, interpolation}}
    end
 end
 
 -- Scales the smaller edge to size
-function M.Scale(size, interpolation)
+function M.ScaleKeepAspect(size, interpolation)
    interpolation = interpolation or 'bicubic'
    return function(input)
       local w, h = input:size(3), input:size(2)
+      local targetW, targetH, result
       if (w <= h and w == size) or (h <= w and h == size) then
-         return input
-      end
-      if w < h then
-         return image.scale(input, size, h/w * size, interpolation)
+         targetW = w
+         targetH = h
+         result = input
       else
-         return image.scale(input, w/h * size, size, interpolation)
+         if w < h then
+            targetW = size
+            targetH = h/w * size
+         else
+            targetW = w/h * size
+            targetH = size
+         end
+         result = image.scale(input, targetW, targetH, interpolation)
       end
+      return result, {scale = {targetW, targetH, interpolation}}
+   end
+end
+
+function M.Crop(corners, padding)
+   padding = padding or 0
+
+   return function(input)
+      if padding > 0 then
+         local temp = input.new(3, input:size(2) + 2*padding, input:size(3) + 2*padding)
+         temp:zero()
+            :narrow(2, padding+1, input:size(2))
+            :narrow(3, padding+1, input:size(3))
+            :copy(input)
+         input = temp
+      end
+
+      return image.crop(input, corners[1], corners[2], corners[3], corners[4]), {crop = {corners, padding}}
    end
 end
 
@@ -54,11 +98,12 @@ function M.CenterCrop(size)
    return function(input)
       local w1 = math.ceil((input:size(3) - size)/2)
       local h1 = math.ceil((input:size(2) - size)/2)
-      return image.crop(input, w1, h1, w1 + size, h1 + size) -- center patch
+      return image.crop(input, w1, h1, w1 + size, h1 + size),  -- center patch
+             {crop = {{w1, h1, w1 + size, h1 + size}, 0}}
    end
 end
 
--- Random crop form larger image with optional zero padding
+-- Random crop from larger image with optional zero padding
 function M.RandomCrop(size, padding)
    padding = padding or 0
 
@@ -74,13 +119,13 @@ function M.RandomCrop(size, padding)
 
       local w, h = input:size(3), input:size(2)
       if w == size and h == size then
-         return input
+         return input, {crop = {{0, 0, w, h}, padding}}
       end
 
       local x1, y1 = torch.random(0, w - size), torch.random(0, h - size)
       local out = image.crop(input, x1, y1, x1 + size, y1 + size)
       assert(out:size(2) == size and out:size(3) == size, 'wrong crop size')
-      return out
+      return out, {crop = {{x1, y1, x1 + size, y1 + size}, padding}}
    end
 end
 
@@ -105,7 +150,7 @@ function M.TenCrop(size)
          output[i] = img:view(1, img:size(1), img:size(2), img:size(3))
       end
 
-      return input.cat(output, 1)
+      return input.cat(output, 1), {tencrop = size}
    end
 end
 
@@ -122,52 +167,19 @@ function M.RandomScale(minSize, maxSize)
          targetW = torch.round(w / h * targetH)
       end
 
-      return image.scale(input, targetW, targetH, 'bicubic')
-   end
-end
-
--- Random crop with size 8%-100% and aspect ratio 3/4 - 4/3 (Inception-style)
-function M.RandomSizedCrop(size)
-   local scale = M.Scale(size)
-   local crop = M.CenterCrop(size)
-
-   return function(input)
-      local attempt = 0
-      repeat
-         local area = input:size(2) * input:size(3)
-         local targetArea = torch.uniform(0.08, 1.0) * area
-
-         local aspectRatio = torch.uniform(3/4, 4/3)
-         local w = torch.round(math.sqrt(targetArea * aspectRatio))
-         local h = torch.round(math.sqrt(targetArea / aspectRatio))
-
-         if torch.uniform() < 0.5 then
-            w, h = h, w
-         end
-
-         if h <= input:size(2) and w <= input:size(3) then
-            local y1 = torch.random(0, input:size(2) - h)
-            local x1 = torch.random(0, input:size(3) - w)
-
-            local out = image.crop(input, x1, y1, x1 + w, y1 + h)
-            assert(out:size(2) == h and out:size(3) == w, 'wrong crop size')
-
-            return image.scale(out, size, size, 'bicubic')
-         end
-         attempt = attempt + 1
-      until attempt >= 10
-
-      -- fallback
-      return crop(scale(input))
+      return image.scale(input, targetW, targetH, 'bicubic'),
+             {scale = {targetW, targetH, 'bicubic'}}
    end
 end
 
 function M.HorizontalFlip(prob)
    return function(input)
+      local flipped = 0
       if torch.uniform() < prob then
          input = image.hflip(input)
+         flipped = 1
       end
-      return input
+      return input, {hflip = flipped}
    end
 end
 
@@ -176,7 +188,7 @@ function M.Rotation(deg)
       if deg ~= 0 then
          input = image.rotate(input, (torch.uniform() - 0.5) * deg * math.pi / 180, 'bilinear')
       end
-      return input
+      return input, {rot = deg}
    end
 end
 
@@ -184,7 +196,7 @@ end
 function M.Lighting(alphastd, eigval, eigvec)
    return function(input)
       if alphastd == 0 then
-         return input
+         return input, {lighting = torch.zeros(3)}
       end
 
       local alpha = torch.Tensor(3):normal(0, alphastd)
@@ -198,7 +210,7 @@ function M.Lighting(alphastd, eigval, eigvec)
       for i=1,3 do
          input[i]:add(rgb[i])
       end
-      return input
+      return input, {lighting = rgb}
    end
 end
 
@@ -224,7 +236,7 @@ function M.Saturation(var)
 
       local alpha = 1.0 + torch.uniform(-var, var)
       blend(input, gs, alpha)
-      return input
+      return input, {saturation = alpha}
    end
 end
 
@@ -237,7 +249,7 @@ function M.Brightness(var)
 
       local alpha = 1.0 + torch.uniform(-var, var)
       blend(input, gs, alpha)
-      return input
+      return input, {brightness = alpha}
    end
 end
 
@@ -251,18 +263,7 @@ function M.Contrast(var)
 
       local alpha = 1.0 + torch.uniform(-var, var)
       blend(input, gs, alpha)
-      return input
-   end
-end
-
-function M.RandomOrder(ts)
-   return function(input)
-      local img = input.img or input
-      local order = torch.randperm(#ts)
-      for i=1,#ts do
-         img = ts[order[i]](img)
-      end
-      return input
+      return input, {contrast = alpha}
    end
 end
 
@@ -283,10 +284,10 @@ function M.ColorJitter(opt)
    end
 
    if #ts == 0 then
-      return function(input) return input end
+      return function(input) return input, {} end
    end
 
-   return M.RandomOrder(ts)
+   return Compose(ts)
 end
 
 return M

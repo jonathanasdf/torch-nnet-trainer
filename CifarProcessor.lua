@@ -5,17 +5,12 @@ local M = torch.class('CifarProcessor', 'Processor')
 function M:__init(model, processorOpts)
   Processor.__init(self, model, processorOpts)
 
-  local f = hdf5.open('/file/cifar10/data.h5', 'r')
+  local f = hdf5.open('/file1/cifar10/data.h5', 'r')
   self.processorOpts.input = f:read('/input'):all()
   self.processorOpts.label = f:read('/label'):all()
   f:close()
-  self.preprocessFn = bindPost(self.preprocess, self.processorOpts)
 
-  self.criterion = nn.CrossEntropyCriterion(nil, false)
-  if nGPU > 0 then
-    require 'cutorch'
-    self.criterion = self.criterion:cuda()
-  end
+  self.criterion = nn.CrossEntropyCriterion(nil, false):cuda()
 
   if opts.logdir then
     self.graph = gnuplot.pngfigure(opts.logdir .. 'acc.png')
@@ -27,38 +22,34 @@ function M:__init(model, processorOpts)
   end
 end
 
-function M.preprocess(path, isTraining, processorOpts)
-  return processorOpts.input[tonumber(path)]
+function M:preprocess(path, pAugment)
+  self:checkAugmentations(pAugment, nil)
+  return processorOpts.input[tonumber(path)], nil
 end
 
-function M.getLabels(pathNames)
+function M:getLabels(pathNames)
   local labels = torch.Tensor(#pathNames)
-  if nGPU > 0 then labels = labels:cuda() end
   for i=1,#pathNames do
     labels[i] = processorOpts.label[tonumber(pathNames[i])]
   end
-  return labels
-end
-
-function M.calcStats(pathNames, outputs, labels)
-  return {outputs:clone(), labels}
+  return labels:cuda()
 end
 
 function M:resetStats()
   self.stats = optim.ConfusionMatrix(10)
 end
 
-function M:accStats(new_stats)
-  self.stats:batchAdd(new_stats[1], new_stats[2])
+function M:updateStats(pathNames, outputs, labels)
+  self.stats:batchAdd(outputs, labels)
 end
 
-function M:processStats(phase)
+function M:getStats()
   self.stats:updateValids()
 
   if self.graph then
-    if phase == 'train' then
+    if opts.phase == 'train' then
       self.trainAcc[opts.epoch] = self.stats.averageValid
-    elseif phase == 'val' then
+    elseif opts.phase == 'val' then
       self.valAcc[opts.epoch] = self.stats.averageValid
     end
 

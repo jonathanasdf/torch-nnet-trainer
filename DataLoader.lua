@@ -1,8 +1,4 @@
-require 'image'
 require 'paths'
-require 'xlua'
-
-require 'Utils'
 
 local initcheck = require 'argcheck'{
   pack=true,
@@ -172,53 +168,6 @@ function DataLoader:get(start, endIncl)
     error('Unsupported input types: ' .. type(start) .. ' ' .. type(endIncl))
   end
   return self:retrieve(indices)
-end
-
-function DataLoader.loadInputs(pathNames, preprocessFn, workerFn)
-  collectgarbage()
-  local first = preprocessFn(pathNames[1])
-  local size = torch.LongStorage(first:dim() + 1)
-  size[1] = #pathNames
-  for i=1,first:dim() do
-    size[i+1] = first:size(i)
-  end
-  local inputs = first.new(size)
-  inputs[1] = first
-  for i=2,#pathNames do
-    inputs[i] = preprocessFn(pathNames[i])
-  end
-  if workerFn then
-    return workerFn(pathNames, inputs)
-  else
-    return pathNames, inputs
-  end
-end
-
-function DataLoader:runAsync(batchSize, epochSize, randomSample, preprocessFn, workerFn, resultHandler, startBatch)
-  if batchSize == -1 then
-    batchSize = self:size()
-  end
-
-  if epochSize == -1 then
-    epochSize = math.ceil(self:size() * 1.0 / batchSize)
-  end
-  epochSize = math.min(epochSize, math.ceil(self:size() * 1.0 / batchSize))
-
-  startBatch = startBatch or 1
-  if startBatch > epochSize then return end
-  startJobs(epochSize-startBatch+1)
-
-  local indexStart = (startBatch-1) * batchSize + 1
-  for i=startBatch,epochSize do
-    local indexEnd = math.min(indexStart + batchSize - 1, self:size())
-    local pathNames = randomSample and self:sample(batchSize) or self:get(indexStart, indexEnd)
-    threads:addjob(self.loadInputs, resultHandler, pathNames, preprocessFn, workerFn)
-    indexStart = indexEnd + 1
-    if indexStart > self:size() then
-      break
-    end
-  end
-  threads:synchronize()
 end
 
 return DataLoader

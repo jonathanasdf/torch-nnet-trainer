@@ -1,4 +1,4 @@
-require 'fbnn'
+require 'TrueNLLCriterion'
 local Transforms = require 'Transforms'
 local Processor = require 'Processor'
 local M = torch.class('ImageNetProcessor', 'Processor')
@@ -11,15 +11,11 @@ function M:__init(model, processorOpts)
   Processor.__init(self, model, processorOpts)
   assert(self.processorOpts.cropSize <= self.processorOpts.resize)
 
-  self.criterion = nn.TrueNLLCriterion(nil, false)
-  if nGPU > 0 then
-    require 'cutorch'
-    self.criterion = self.criterion:cuda()
-  end
+  self.criterion = nn.TrueNLLCriterion(nil, false):cuda()
 
-  local synset = '/file/imagenet/ILSVRC2012_devkit_t12/words.txt'
+  local synset = '/file1/imagenet/ILSVRC2012_devkit_t12/words.txt'
   if self.processorOpts.inceptionPreprocessing then
-    synset = '/file/imagenet/inception_synset.txt'
+    synset = '/file1/imagenet/inception_synset.txt'
   elseif self.processorOpts.caffePreprocessing then
     self.processorOpts.meanPixel = torch.Tensor{103.939, 116.779, 123.68}:view(3, 1, 1)
   else
@@ -37,7 +33,7 @@ function M:__init(model, processorOpts)
   end
 
   self.val = {}
-  for line in io.lines('/file/imagenet/ILSVRC2012_devkit_t12/data/WNID_validation_ground_truth.txt') do
+  for line in io.lines('/file1/imagenet/ILSVRC2012_devkit_t12/data/WNID_validation_ground_truth.txt') do
     self.val[#self.val+1] = self.lookup[line]
   end
 
@@ -60,62 +56,36 @@ function M:__init(model, processorOpts)
   end
 end
 
-function M.preprocess(path, isTraining, processorOpts)
+function M:preprocess(path, pAugment)
   local img = image.load(path, 3)
-  img = Transforms.Scale(processorOpts.resize)(img)
-  img = Transforms.CenterCrop(processorOpts.cropSize)(img)
+  img = Transforms.ScaleKeepAspect(self.processorOpts.resize)(img)
+  img = Transforms.CenterCrop(self.processorOpts.cropSize)(img)
 
-  if processorOpts.inceptionPreprocessing then
+  if self.processorOpts.inceptionPreprocessing then
     img = (img * 255 - 128) / 128
-  elseif processorOpts.caffePreprocessing then
-    img = (convertRGBBGR(img) * 255):csub(processorOpts.meanPixel:expandAs(img))
+  elseif self.processorOpts.caffePreprocessing then
+    img = (convertRGBBGR(img) * 255):csub(self.processorOpts.meanPixel:expandAs(img))
   else
-    img = img:csub(processorOpts.meanPixel:expandAs(img)):cdiv(processorOpts.std:expandAs(img))
+    img = img:csub(self.processorOpts.meanPixel:expandAs(img)):cdiv(self.processorOpts.std:expandAs(img))
   end
 
-  if nGPU > 0 then
-    img = img:cuda()
-  end
-  return img
+  self:checkAugmentations(pAugment, nil)
+  return img:cuda(), nil
 end
 
-function M.getLabels(pathNames)
+function M:getLabels(pathNames)
   local labels = torch.Tensor(#pathNames)
-  if nGPU > 0 then labels = labels:cuda() end
   for i=1,#pathNames do
     local name = pathNames[i]
     local filename = paths.basename(name)
     if name:find('train') then
-      labels[i] = _processor.lookup[string.sub(filename, 1, 9)]
+      labels[i] = self.lookup[string.sub(filename, 1, 9)]
     else
       assert(name:find('val'))
-      labels[i] = _processor.val[tonumber(string.sub(filename, -12, -5))]
+      labels[i] = self.val[tonumber(string.sub(filename, -12, -5))]
     end
   end
-  return labels
-end
-
-function M.calcStats(pathNames, outputs, labels)
-  local top1 = 0
-  local top5 = 0
-  for i=1,#pathNames do
-    local prob, classes = (#pathNames == 1 and outputs or outputs[i]):view(-1):sort(true)
-    local result = 'predicted classes for ' .. paths.basename(pathNames[i]) .. ': '
-    for j=1,5 do
-      local color = ''
-      if classes[j] == labels[i] then
-        if j == 1 then top1 = top1 + 1 end
-        top5 = top5 + 1
-        color = '\27[33m'
-      end
-      result = result .. color .. '(' .. math.floor(prob[j]*100 + 0.5) .. '%) ' .. _processor.words[classes[j]] .. '\27[0m; '
-    end
-    if labels[i] ~= -1 then
-      result = result .. '\27[36mground truth: ' .. _processor.words[labels[i]] .. '\27[0m'
-    end
-    --print(result)
-  end
-  return {top1, top5, #pathNames}
+  return labels:cuda()
 end
 
 function M:resetStats()
@@ -125,18 +95,35 @@ function M:resetStats()
   self.stats.total = 0
 end
 
-function M:accStats(new_stats)
-  self.stats.top1 = self.stats.top1 + new_stats[1]
-  self.stats.top5 = self.stats.top5 + new_stats[2]
-  self.stats.total = self.stats.total + new_stats[3]
+function M:updateStats(pathNames, outputs, labels)
+  for i=1,#pathNames do
+    local prob, classes = (#pathNames == 1 and outputs or outputs[i]):view(-1):sort(true)
+    local result = 'predicted classes for ' .. paths.basename(pathNames[i]) .. ': '
+    for j=1,5 do
+      local color = ''
+      if classes[j] == labels[i] then
+        if j == 1 then
+          self.stats.top1 = self.stats.top1 + 1
+        end
+        self.stats.top5 = self.stats.top5 + 1
+        color = '\27[33m'
+      end
+      result = result .. color .. '(' .. math.floor(prob[j]*100 + 0.5) .. '%) ' .. self.words[classes[j]] .. '\27[0m; '
+    end
+    if labels[i] ~= -1 then
+      result = result .. '\27[36mground truth: ' .. self.words[labels[i]] .. '\27[0m'
+    end
+    --print(result)
+  end
+  self.stats.total = self.stats.total + #pathNames
 end
 
-function M:processStats(phase)
+function M:getStats()
   local output = ''
   output = output .. '  Top 1 accuracy: ' .. self.stats.top1 .. '/' .. self.stats.total .. ' = ' .. (self.stats.top1*100.0/self.stats.total) .. '%\n'
   output = output .. '  Top 5 accuracy: ' .. self.stats.top5 .. '/' .. self.stats.total .. ' = ' .. (self.stats.top5*100.0/self.stats.total) .. '%'
 
-  if phase == 'train' and self.trainGraph then
+  if opts.phase == 'train' and self.trainGraph then
     self.trainTop1[opts.epoch] = self.stats.top1/self.stats.total
     self.trainTop5[opts.epoch] = self.stats.top5/self.stats.total
 
@@ -144,7 +131,7 @@ function M:processStats(phase)
     gnuplot.figure(self.trainGraph)
     gnuplot.plot({'top1', x, self.trainTop1:index(1, x), '+-'}, {'top5', x, self.trainTop5:index(1, x), '+-'})
     gnuplot.plotflush()
-  elseif phase == 'val' and self.valGraph and opts.epoch >= opts.valEvery then
+  elseif opts.phase == 'val' and self.valGraph and opts.epoch >= opts.valEvery then
     self.valTop1[opts.epoch] = self.stats.top1/self.stats.total
     self.valTop5[opts.epoch] = self.stats.top5/self.stats.total
 

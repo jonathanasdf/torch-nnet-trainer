@@ -2,8 +2,6 @@ function defineBaseOptions(cmd)
   cmd:option('-batchSize', 32, 'batch size')
   cmd:option('-epochSize', -1, 'num batches per epochs. -1 means run all available data once')
   cmd:option('-dropout', -1, 'dropout probability. -1 means leave it untouched')
-  cmd:option('-nThreads', 1, 'number of worker threads')
-  cmd:option('-nGPU', 1, 'number of GPU to use. Set to -1 to use CPU')
 end
 
 function defineTrainingOptions(cmd)
@@ -29,25 +27,8 @@ end
 function processArgs(cmd)
   torch.setdefaulttensortype('torch.FloatTensor')
   opts = cmd:parse(arg or {})
-  if opts.nGPU == 0 then
-    error('nGPU should not be 0. Please set nGPU to -1 if you want to use CPU.')
-  end
   opts.pid = require("posix").getpid("pid")
   print("Process", opts.pid, "started!")
-
-  if opts.nGPU == -1 then opts.nGPU = 0 end
-  if opts.nThreads < opts.nGPU-1 then
-    if opts.nThreads == 0 then
-      print('Not enough threads to use all gpus. Setting nGPU=1 since nThreads=0.')
-      opts.nGPU = 1
-    else
-      opts.nThreads = opts.nGPU-1
-      print('Not enough threads to use all gpus. Increasing nThreads to ' .. opts.nThreads)
-    end
-  end
-
-  nGPU = opts.nGPU
-  nThreads = opts.nThreads
 
   if opts.val and opts.val ~= '' then
     if opts.valBatchSize == -1 then
@@ -96,99 +77,11 @@ function processArgs(cmd)
       print(k, v)
     end
   end
-
-  local opt = opts
-  local setup = {
-    function()
-      package.path = package.path .. ';/home/jshen/scripts/?.lua'
-      package.path = package.path .. ';/home/nvesdapu/scripts/?.lua'
-
-      torch.setdefaulttensortype('torch.FloatTensor')
-      cv = require 'cv'
-      if opt.nGPU > 0 then
-        require 'cudnn'
-        require 'cunn'
-        require 'cv.cudawarping'
-        require 'cv.imgcodecs'
-        require 'features'
-      end
-      require 'dpnn'
-      require 'draw'
-      require 'fbnn'
-      require 'gnuplot'
-      require 'hdf5'
-      require 'image'
-      require 'optim'
-      require 'paths'
-    end,
-    function()
-      require 'Model'
-      require 'Utils'
-
-      min = math.min
-      max = math.max
-      floor = math.floor
-      ceil = math.ceil
-    end,
-    function()
-      opts = opt
-      nGPU = opts.nGPU
-      if nGPU > 0 then
-        cudnn.benchmark = true
-      end
-      nThreads = opts.nThreads
-      if opts.processor then
-        requirePath(opts.processor)
-      end
-    end
-  }
-
-  if opts.nThreads > 0 then
-    torch.setnumthreads(opts.nThreads)
-    local Threads = require 'threads'
-    Threads.serialization('threads.sharedserialize')
-    threads = Threads(opts.nThreads, unpack(setup))
-  else
-    threads = {}
-    threads.addjob = function(self, f1, f2, ...)
-      local r = {f1(...)}
-      if f2 then f2(unpack(r)) end
-    end
-    threads.synchronize = function() end
-    for i=1,#setup do
-      setup[i]()
-    end
-  end
 end
 
-function augmentThreadState(...)
-  local funcs = {...}
-  if nThreads == 0 then
-    for j=1,#funcs do
-      funcs[j]()
-    end
-    return
-  end
-  local specific = threads:specific()
-  threads:specific(true)
-  for j=1,#funcs do
-    for i=1,nThreads do
-      threads:addjob(i, funcs[j])
-    end
-  end
-  threads:specific(specific)
-end
-
-local jobsDone, jobSize
-function startJobs(count)
-  jobsDone = 0
-  jobSize = count
-  xlua.progress(jobsDone, jobSize)
-end
-
-function jobDone()
-  jobsDone = jobsDone + 1
-  xlua.progress(jobsDone, jobSize)
+function setPhase(phase)
+  assert(phase == 'train' or phase == 'test' or phase == 'val')
+  opts.phase = phase
 end
 
 function requirePath(path)
