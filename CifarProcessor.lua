@@ -1,16 +1,15 @@
-require 'hdf5'
 local Processor = require 'Processor'
+require 'TrueNLLCriterion'
 local M = torch.class('CifarProcessor', 'Processor')
 
 function M:__init(model, processorOpts)
   Processor.__init(self, model, processorOpts)
 
-  local f = hdf5.open('/file1/cifar10/data.h5', 'r')
-  self.processorOpts.input = f:read('/input'):all()
-  self.processorOpts.label = f:read('/label'):all()
-  f:close()
+  local data = torch.load('/file1/cifar10/data.t7')
+  self.processorOpts.input = data.data
+  self.processorOpts.label = data.labels
 
-  self.criterion = nn.CrossEntropyCriterion(nil, false):cuda()
+  self.criterion = nn.TrueNLLCriterion(nil, false):cuda()
 
   if opts.logdir then
     self.graph = gnuplot.pngfigure(opts.logdir .. 'acc.png')
@@ -24,13 +23,13 @@ end
 
 function M:preprocess(path, pAugment)
   self:checkAugmentations(pAugment, nil)
-  return processorOpts.input[tonumber(path)], nil
+  return self.processorOpts.input[tonumber(path)]:cuda(), nil
 end
 
 function M:getLabels(pathNames)
   local labels = torch.Tensor(#pathNames)
   for i=1,#pathNames do
-    labels[i] = processorOpts.label[tonumber(pathNames[i])]
+    labels[i] = self.processorOpts.label[tonumber(pathNames[i])]
   end
   return labels:cuda()
 end
@@ -55,8 +54,8 @@ function M:getStats()
 
     gnuplot.figure(self.graph)
     local x = torch.range(1, opts.epoch):long()
-    local x2 = torch.range(opts.valEvery, opts.epoch):long()
     if opts.epoch >= opts.valEvery then
+      local x2 = torch.range(opts.valEvery, opts.epoch):long()
       gnuplot.plot({'train', x, self.trainAcc:index(1, x), '-'}, {'val', x2, self.valAcc:index(1, x2), '-'})
     else
       gnuplot.plot({'train', x, self.trainAcc:index(1, x), '-'})

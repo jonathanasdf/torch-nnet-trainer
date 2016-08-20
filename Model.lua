@@ -9,6 +9,8 @@ require 'DataLoader'
 require 'Utils'
 
 cudnn.benchmark = true
+local optnet = require 'optnet'
+
 local M, Parent = torch.class('Model', 'nn.Decorator')
 
 function M:__init(specStr)
@@ -53,7 +55,7 @@ function M:load(path)
   assert(paths.filep(path), 'File not found: ' .. path)
   if paths.extname(path) == 'lua' then
     print('Creating model from file: ' .. path)
-    self.model = paths.dofile(path)
+    self.model = requirePath(path)
     cudnn.convert(self.model, cudnn)
   else
     print('Loading model from file: ' .. path)
@@ -64,7 +66,11 @@ end
 
 function M:save(filename)
   self:clearState()
-  torch.save(filename, self.model:clone():float())
+  local clone = self.model:clone():float()
+  if self.optimized then
+    optnet.removeOptimization(clone)
+  end
+  torch.save(filename, clone)
   opts.optimState.dfdx = nil
   torch.save(filename .. '.optimState', opts.optimState)
 end
@@ -92,6 +98,19 @@ function M:backward(inputs, gradOutputs, gradLayer)
   else
     self.model:backward(inputs, gradOutputs)
   end
+end
+
+function M:optimizeMemory(inputs, isTraining)
+  if self.optimized then
+    return
+  end
+  -- Optimize the model (assumes fixed input size!)
+  local opts = {inplace = false}
+  if isTraining then
+    opts['mode'] = 'training'
+  end
+  optnet.optimizeMemory(self.model, inputs, opts)
+  self.optimized = true
 end
 
 function M:updateModel(loss, cnt)
@@ -167,6 +186,10 @@ function M:train(trainFn, valFn)
   if opts.val ~= '' then
     validLoader = DataLoader{inputs = opts.val, randomize = true}
   end
+
+  local pathNames = trainLoader:sample(opts.batchSize)
+  local inputs = self.processor:loadAndPreprocessInputs(pathNames)
+  self:optimizeMemory(inputs, true)
 
   if opts.optimState ~= '' then
     opts.optimState = torch.load(opts.optimState)
@@ -262,6 +285,10 @@ function M:train(trainFn, valFn)
         if opts.keepCaches then
           os.execute('cp ' .. cachename .. ' ' .. opts.cachedir .. 'epoch' .. epoch .. '.t7')
         end
+
+        local pathNames = trainLoader:sample(opts.batchSize)
+        local inputs = self.processor:loadAndPreprocessInputs(pathNames)
+        self:optimizeMemory(inputs, true)
       end
     end
   end
