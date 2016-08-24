@@ -56,10 +56,13 @@ function M:__init(model, processorOpts)
   end
 end
 
-function M:preprocess(path, pAugment)
+function M:preprocess(path, augmentations)
   local img = image.load(path, 3)
-  img = Transforms.ScaleKeepAspect(self.processorOpts.resize)(img)
-  img = Transforms.CenterCrop(self.processorOpts.cropSize)(img)
+
+  local augs = {}
+  augs[#augs+1] = Transforms.ScaleKeepAspect(self.processorOpts.resize)
+  augs[#augs+1] = Transforms.CenterCrop(self.processorOpts.cropSize)
+  img = Transforms.apply(augs, img)
 
   if self.processorOpts.inceptionPreprocessing then
     img = (img * 255 - 128) / 128
@@ -69,8 +72,8 @@ function M:preprocess(path, pAugment)
     img = img:csub(self.processorOpts.meanPixel:expandAs(img)):cdiv(self.processorOpts.std:expandAs(img))
   end
 
-  self:checkAugmentations(pAugment, nil)
-  return img:cuda(), nil
+  self:checkAugmentations(augmentations, augs)
+  return img:cuda(), augs
 end
 
 function M:getLabels(pathNames)

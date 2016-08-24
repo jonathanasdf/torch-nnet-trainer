@@ -29,7 +29,7 @@ function M:__init(specStr)
   local processorOpts = table.concat(args, ' ')
   self.processor = requirePath(processorPath).new(self, processorOpts)
 
-  setDropout(self.model, opts.dropout)
+  setDropout(self.model, processorOpts.dropout)
   self.model:zeroGradParameters()
   Parent.__init(self, self.model)
 

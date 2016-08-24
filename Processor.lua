@@ -6,6 +6,7 @@ local M = torch.class('Processor')
 
 M.cmd = torch.CmdLine()
 function M:__init(model, processorOpts)
+  self.cmd:option('-dropout', -1, 'dropout probability. -1 means leave it untouched')
   self.model = model
   self.processorOpts = self.cmd:parse(processorOpts:split(' ='))
 
@@ -13,36 +14,50 @@ function M:__init(model, processorOpts)
   self.testFn = bind(self.test, self)
 end
 
+-- nil means anything is fine. {} means no augmentations.
 function M:checkAugmentations(a, b)
-  if a == nil then
+  if a == nil or b == nil then
     return
   end
 
-  b = b or {}
-  for k,v in pairs(a) do
-    if b[k] == nil then
-      error('Augmentation ' .. k .. ' specified but not performed.')
+  local fail = false
+  if #a ~= #b then
+    fail = true
+  else
+    for i=1,#a do
+      -- augmentations are {'name', fn}
+      if b[i][1] ~= a[i][1] then
+        fail = true
+      end
     end
   end
-  for k,v in pairs(b) do
-    if a[k] == nil then
-      error('Augmentation ' .. k .. ' not specified but performed.')
+
+  if fail then
+    local msg = 'Augmentations do not match:\n{'
+    for i=1,#a do
+      msg = msg + a[i][1] + ','
     end
+    msg = msg + '}\n{'
+    for i=1,#b do
+      msg = msg + b[i][1] + ','
+    end
+    msg = msg + '}'
+    error(msg)
   end
 end
 
--- Takes path as input and returns a cuda tensor that can be used
--- as input to the model such as an image, as well as the augmentations used
-function M:preprocess(path, pAugment)
-  self:checkAugmentations(pAugment, nil)
-  return image.load(path, 3):cuda(), nil
+-- Takes path as input and what augmentations should be performed, and
+-- returns a cuda tensor as input to the model and the augmentations used
+function M:preprocess(path, augmentations)
+  self:checkAugmentations(augmentations, {})
+  return image.load(path, 3):cuda(), {}
 end
 
-function M:loadAndPreprocessInputs(pathNames, pAugment)
-  pAugment = pAugment or {}
-  augmentations = {}
+function M:loadAndPreprocessInputs(pathNames, augmentations)
+  augmentations = augmentations or {}
+  augs = {}
   local first
-  first, augmentations[1] = self:preprocess(pathNames[1], pAugment[1])
+  first, augs[1] = self:preprocess(pathNames[1], augmentations[1])
   local size = torch.LongStorage(first:dim() + 1)
   size[1] = #pathNames
   for i=1,first:dim() do
@@ -51,9 +66,9 @@ function M:loadAndPreprocessInputs(pathNames, pAugment)
   local inputs = first.new(size)
   inputs[1] = first
   for i=2,#pathNames do
-    inputs[i], augmentations[i] = self:preprocess(pathNames[i], pAugment[i])
+    inputs[i], augs[i] = self:preprocess(pathNames[i], augmentations[i])
   end
-  return inputs, augmentations
+  return inputs, augs
 end
 
 -- return the labels associated with the list of paths as cuda tensors

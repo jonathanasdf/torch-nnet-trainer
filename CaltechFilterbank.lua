@@ -9,31 +9,31 @@ function M:__init(model, processorOpts)
   CaltechProcessor.__init(self, model, processorOpts)
 end
 
-function M:preprocess(path, pAugment)
-  if pAugment == nil then
-    pAugment = {}
+function M:preprocess(path, augmentations)
+  local augs = {}
+  if augmentations ~= nil then
+    for i=1,#augmentations do
+      local name = augmentations[i][1]
+      if name == 'scale' or name == 'hflip' then
+        augs[#augs+1] = augmentations[i]
+      end
+    end
+  else
+    local sz = self.processorOpts.imageSize
+    augs[#augs+1] = Transforms.Scale(sz, sz)
+
     if opts.phase == 'train' then
       if self.processorOpts.flip ~= 0 then
-        pAugment['hflip'] = self.processorOpts.flip
+        augs[#augs+1] = Transforms.HorizontalFlip(self.processorOpts.flip)
       end
     end
   end
+
   local img = image.load(path, 3)
-  local sz = self.processorOpts.imageSize
-  if img:size(2) ~= sz or img:size(3) ~= sz then
-    img = image.scale(img, sz, sz)
-  end
-
-  local augmentations
-  if opts.phase == 'train' then
-    if self.processorOpts.flip ~= 0 then
-      img, augmentations = Transforms.HorizontalFlip(pAugment['hflip'])(img)
-    end
-  end
+  Transforms.Apply(augs, img)
   img = filterbank(img)
-
-  self:checkAugmentations(pAugment, augmentations)
-  return img:cuda(), augmentations
+  self:checkAugmentations(augmentations, augs)
+  return img:cuda(), augs
 end
 
 return M

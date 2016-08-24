@@ -1,7 +1,6 @@
 function defineBaseOptions(cmd)
   cmd:option('-batchSize', 32, 'batch size')
   cmd:option('-epochSize', -1, 'num batches per epochs. -1 means run all available data once')
-  cmd:option('-dropout', -1, 'dropout probability. -1 means leave it untouched')
 end
 
 function defineTrainingOptions(cmd)
