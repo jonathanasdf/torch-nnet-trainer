@@ -39,7 +39,6 @@ end
 
 local pathNames = dataloader:sample(opts.batchSize)
 local inputs = model.processor:loadAndPreprocessInputs(pathNames)
-model:optimizeMemory(inputs)
 model:run(dataloader,
           opts.batchSize,
           opts.epochSize,

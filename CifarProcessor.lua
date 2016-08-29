@@ -5,13 +5,13 @@ local M = torch.class('CifarProcessor', 'Processor')
 
 function M:__init(model, processorOpts)
   self.cmd:option('-imageSize', 32, 'input image size')
-  self.cmd:option('-minCropPercent', 0.75, 'minimum of original size to crop to for random cropping (for training)')
+  self.cmd:option('-minCropPercent', 1, 'minimum of original size to crop to for random cropping (for training)')
   self.cmd:option('-flip', 0.5, 'probability to do horizontal flip (for training)')
   Processor.__init(self, model, processorOpts)
 
   local data = torch.load('/file1/cifar10/data.t7')
   self.processorOpts.input = data.data
-  self.processorOpts.label = data.labels
+  self.processorOpts.label = data.labels:cuda()
 
   self.criterion = nn.TrueNLLCriterion(nil, false):cuda()
 
@@ -55,11 +55,11 @@ function M:preprocess(path, augmentations)
 end
 
 function M:getLabels(pathNames)
-  local labels = torch.Tensor(#pathNames)
+  local labels = torch.CudaTensor(#pathNames)
   for i=1,#pathNames do
     labels[i] = self.processorOpts.label[tonumber(pathNames[i])]
   end
-  return labels:cuda()
+  return labels
 end
 
 function M:resetStats()

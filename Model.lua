@@ -9,7 +9,6 @@ require 'DataLoader'
 require 'Utils'
 
 cudnn.benchmark = true
-local optnet = require 'optnet'
 
 local M, Parent = torch.class('Model', 'nn.Decorator')
 
@@ -66,11 +65,7 @@ end
 
 function M:save(filename)
   self:clearState()
-  local clone = self.model:clone():float()
-  if self.optimized then
-    optnet.removeOptimization(clone)
-  end
-  torch.save(filename, clone)
+  torch.save(filename, self.model)
   opts.optimState.dfdx = nil
   torch.save(filename .. '.optimState', opts.optimState)
 end
@@ -98,19 +93,6 @@ function M:backward(inputs, gradOutputs, gradLayer)
   else
     self.model:backward(inputs, gradOutputs)
   end
-end
-
-function M:optimizeMemory(inputs, isTraining)
-  if self.optimized then
-    return
-  end
-  -- Optimize the model (assumes fixed input size!)
-  local opts = {inplace = false}
-  if isTraining then
-    opts['mode'] = 'training'
-  end
-  optnet.optimizeMemory(self.model, inputs, opts)
-  self.optimized = true
 end
 
 function M:updateModel(loss, cnt)
@@ -189,7 +171,6 @@ function M:train(trainFn, valFn)
 
   local pathNames = trainLoader:sample(opts.batchSize)
   local inputs = self.processor:loadAndPreprocessInputs(pathNames)
-  self:optimizeMemory(inputs, true)
 
   if opts.optimState ~= '' then
     opts.optimState = torch.load(opts.optimState)
@@ -288,7 +269,6 @@ function M:train(trainFn, valFn)
 
         local pathNames = trainLoader:sample(opts.batchSize)
         local inputs = self.processor:loadAndPreprocessInputs(pathNames)
-        self:optimizeMemory(inputs, true)
       end
     end
   end

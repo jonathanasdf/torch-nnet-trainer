@@ -6,37 +6,28 @@ local function shortcut(nInputPlane, nOutputPlane, stride)
     return nn.Identity()
   else
     -- Strided, zero-padded identity shortcut
-    local m = nn.Sequential()
-    m:add(nn.SpatialAveragePooling(1, 1, stride, stride))
-    m:add(nn.Padding(2, nOutputPlane - nInputPlane))
-    return m
+    return nn.SpatialConvolution(nInputPlane, nOutputPlane, 1, 1, stride, stride, 0, 0)
   end
 end
 
--- Typically shareGradInput uses the same gradInput storage for all modules
--- of the same type. This is incorrect for some SpatialBatchNormalization
--- modules in this network b/c of the in-place CAddTable. This marks the
--- module so that it's shared only with other modules with the same key
-local function ShareGradInput(module, key)
-   assert(key)
-   module.__shareGradInputKey = key
-   return module
-end
-
 local BasicResidualModule, Parent = torch.class('nn.BasicResidualModule', 'nn.Decorator')
-function BasicResidualModule:__init(nInputPlane, n, stride)
+function BasicResidualModule:__init(nInputPlane, n, stride, dropout)
   self.nInputPlane = nInputPlane
   self.n = n
   self.stride = stride
+  self.dropout = dropout or 0
 
   self.module = nn.Sequential()
-  self.module:add(ShareGradInput(nn.SpatialBatchNormalization(nInputPlane), 'preact'))
-  self.module:add(nn.ReLU(true))
-
   self.block = nn.Sequential()
+
+  local m = nInputPlane == n and self.block or self.module
+  m:add(nn.SpatialBatchNormalization(nInputPlane)):add(nn.ReLU(true))
+
   self.block:add(nn.SpatialConvolution(nInputPlane, n, 3, 3, stride, stride, 1, 1))
-  self.block:add(nn.SpatialBatchNormalization(n))
-  self.block:add(nn.ReLU(true))
+  self.block:add(nn.SpatialBatchNormalization(n)):add(nn.ReLU(true))
+  if self.dropout ~= 0 then
+    self.block:add(nn.Dropout(self.dropout))
+  end
   self.block:add(nn.SpatialConvolution(n, n, 3, 3, 1, 1, 1, 1))
 
   self.shortcut = shortcut(nInputPlane, n, stride)
@@ -47,29 +38,32 @@ function BasicResidualModule:__init(nInputPlane, n, stride)
   Parent.__init(self, self.module)
 end
 
---function BasicResidualModule:__tostring__()
---  return string.format('%s(%d, %d, %d)', torch.type(self), self.nInputPlane, self.n, self.stride)
---end
+function BasicResidualModule:__tostring__()
+  return string.format('%s(%d, %d, %d)', torch.type(self), self.nInputPlane, self.n, self.stride)
+end
 
 
 local BottleneckResidualModule, Parent = torch.class('nn.BottleneckResidualModule', 'nn.Decorator')
-function BottleneckResidualModule:__init(nInputPlane, nSqueeze, nExpand, stride)
+function BottleneckResidualModule:__init(nInputPlane, nSqueeze, nExpand, stride, dropout)
   self.nInputPlane = nInputPlane
   self.nSqueeze = nSqueeze
   self.nExpand = nExpand
   self.stride = stride
+  self.dropout = dropout or 0
 
   self.module = nn.Sequential()
-  self.module:add(ShareGradInput(nn.SpatialBatchNormalization(nInputPlane), 'preact'))
-  self.module:add(nn.ReLU(true))
-
   self.block = nn.Sequential()
+
+  local m = nInputPlane == nExpand and self.block or self.module
+  m:add(nn.SpatialBatchNormalization(nInputPlane)):add(nn.ReLU(true))
+
   self.block:add(nn.SpatialConvolution(nInputPlane, nSqueeze, 1, 1, 1, 1))
-  self.block:add(nn.SpatialBatchNormalization(nSqueeze))
-  self.block:add(nn.ReLU(true))
+  self.block:add(nn.SpatialBatchNormalization(nSqueeze)):add(nn.ReLU(true))
+  if self.dropout ~= 0 then
+    self.block:add(nn.Dropout(self.dropout))
+  end
   self.block:add(nn.SpatialConvolution(nSqueeze, nSqueeze, 3, 3, stride, stride, 1, 1))
-  self.block:add(nn.SpatialBatchNormalization(nSqueeze))
-  self.block:add(nn.ReLU(true))
+  self.block:add(nn.SpatialBatchNormalization(nSqueeze)):add(nn.ReLU(true))
   self.block:add(nn.SpatialConvolution(nSqueeze, nExpand, 1, 1, 1, 1))
 
   self.shortcut = shortcut(nInputPlane, nExpand, stride)
@@ -100,10 +94,11 @@ function FireResidualModule:__init(nInputPlane, s1x1, e1x1, e3x3)
   m:remove()
 
   self.module = nn.Sequential()
-  self.module:add(ShareGradInput(nn.SpatialBatchNormalization(nInputPlane), 'preact'))
-  self.module:add(nn.ReLU(true))
-
   self.block = nn.Sequential()
+
+  m = nInputPlane == e1x1+e3x3 and self.block or self.module
+  m:add(nn.SpatialBatchNormalization(nInputPlane)):add(nn.ReLU(true))
+
   self.block:add(fireModule)
 
   self.shortcut = shortcut(nInputPlane, e1x1+e3x3, 1)

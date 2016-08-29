@@ -57,7 +57,6 @@ local function train(pathNames)
   local teacherInputs = studentInputs
   if not(opts.useSameInputs) then
     teacherInputs = teacher.processor:loadAndPreprocessInputs(pathNames, augmentations)
-    teacher:optimizeMemory(teacherInputs)
   end
 
   local teacherLayerOutputs, outputs, variance=1
