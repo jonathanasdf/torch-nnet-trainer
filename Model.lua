@@ -39,6 +39,24 @@ function M:__init(specStr)
   print('Total parameters: ', self.gradParams:size(1))
 end
 
+local function makeDataParallelTable(model, nGPU)
+   if nGPU > 1 then
+      local gpus = torch.range(1, nGPU):totable()
+      local fastest, benchmark = cudnn.fastest, cudnn.benchmark
+
+      local dpt = nn.DataParallelTable(1, true, true)
+         :add(model, gpus)
+         :threads(function()
+            require 'resnet'
+            local cudnn = require 'cudnn'
+            cudnn.fastest, cudnn.benchmark = fastest, benchmark
+         end)
+      dpt.gradInput = nil
+      model = dpt:cuda()
+   end
+   return model
+end
+
 local function loadSavedModel(filename)
   local model
   if paths.extname(filename) == 'caffemodel' then
@@ -60,7 +78,7 @@ function M:load(path)
     print('Loading model from file: ' .. path)
     self.model = loadSavedModel(path)
   end
-  self.model = self.model:cuda()
+  self.model = makeDataParallelTable(self.model:cuda(), opts.nGPU)
 end
 
 function M:save(filename)
@@ -156,10 +174,10 @@ function M:train(trainFn, valFn)
     error('Input must be defined for training.')
   end
   if not trainFn then
-    trainFn = self.processor.trainFn
+    trainFn = bind(self.processor.train, self.processor)
   end
   if not valFn then
-    valFn = self.processor.testFn
+    valFn = bind(self.processor.test, self.processor)
   end
 
   local trainLoader = DataLoader{inputs = opts.input, weights = opts.inputWeights}

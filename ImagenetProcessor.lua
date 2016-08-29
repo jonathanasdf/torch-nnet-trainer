@@ -71,8 +71,6 @@ function M:preprocess(path, augmentations)
   else
     img = img:csub(self.processorOpts.meanPixel:expandAs(img)):cdiv(self.processorOpts.std:expandAs(img))
   end
-
-  self:checkAugmentations(augmentations, augs)
   return img:cuda(), augs
 end
 

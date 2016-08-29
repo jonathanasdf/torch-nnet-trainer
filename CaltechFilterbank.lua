@@ -32,7 +32,6 @@ function M:preprocess(path, augmentations)
   local img = image.load(path, 3)
   Transforms.Apply(augs, img)
   img = filterbank(img)
-  self:checkAugmentations(augmentations, augs)
   return img:cuda(), augs
 end
 

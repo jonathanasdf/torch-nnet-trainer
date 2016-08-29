@@ -38,9 +38,9 @@ function BasicResidualModule:__init(nInputPlane, n, stride, dropout)
   Parent.__init(self, self.module)
 end
 
-function BasicResidualModule:__tostring__()
-  return string.format('%s(%d, %d, %d)', torch.type(self), self.nInputPlane, self.n, self.stride)
-end
+--function BasicResidualModule:__tostring__()
+--  return string.format('%s(%d, %d, %d)', torch.type(self), self.nInputPlane, self.n, self.stride)
+--end
 
 
 local BottleneckResidualModule, Parent = torch.class('nn.BottleneckResidualModule', 'nn.Decorator')

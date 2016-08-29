@@ -5,8 +5,9 @@ local M = torch.class('CifarProcessor', 'Processor')
 
 function M:__init(model, processorOpts)
   self.cmd:option('-imageSize', 32, 'input image size')
-  self.cmd:option('-minCropPercent', 1, 'minimum of original size to crop to for random cropping (for training)')
-  self.cmd:option('-flip', 0.5, 'probability to do horizontal flip (for training)')
+  self.cmd:option('-flip', 0.5, '(training) probability to do horizontal flip')
+  self.cmd:option('-minCropPercent', 1, '(training) minimum of original size to crop to for random cropping')
+  self.cmd:option('-randomCrop', 0, '(training) number of pixels to pad for random crop')
   Processor.__init(self, model, processorOpts)
 
   local data = torch.load('/file1/cifar10/data.t7')
@@ -36,21 +37,22 @@ function M:preprocess(path, augmentations)
     end
   else
     if opts.phase == 'train' then
-      if self.processorOpts.minCropPercent ~= 1 then
+      if self.processorOpts.randomCrop > 0 then
+        augs[#augs+1] = Transforms.RandomCrop(
+            self.processorOpts.imageSize, self.processorOpts.randomCrop, 'reflection')
+      end
+      if self.processorOpts.minCropPercent < 1 then
         augs[#augs+1] = Transforms.RandomCropPercent(self.processorOpts.minCropPercent)
       end
-      if self.processorOpts.flip ~= 0 then
+      if self.processorOpts.flip > 0 then
         augs[#augs+1] = Transforms.HorizontalFlip(self.processorOpts.flip)
       end
     end
-
-    local sz = self.processorOpts.imageSize
-    augs[#augs+1] = Transforms.Scale(sz, sz)
+    augs[#augs+1] = Transforms.Scale(self.processorOpts.imageSize, self.processorOpts.imageSize)
   end
 
   local img = self.processorOpts.input[tonumber(path)]
   Transforms.Apply(augs, img)
-  self:checkAugmentations(augmentations, augs)
   return img:cuda(), augs
 end
 

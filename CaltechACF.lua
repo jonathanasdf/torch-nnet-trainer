@@ -32,7 +32,6 @@ function M:preprocess(path, augmentations)
   local name = paths.basename(path, '.png')
   local imgs = torch.load(dir .. name .. '.t7'):decompress()
   Transforms.Apply(augs, imgs)
-  self:checkAugmentations(augmentations, augs)
   return imgs:cuda(), augs
 end
 

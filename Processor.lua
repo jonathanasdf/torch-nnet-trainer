@@ -15,7 +15,7 @@ function M:__init(model, processorOpts)
 end
 
 -- nil means anything is fine. {} means no augmentations.
-function M:checkAugmentations(a, b)
+local function checkAugmentations(a, b)
   if a == nil or b == nil then
     return
   end
@@ -49,7 +49,6 @@ end
 -- Takes path as input and what augmentations should be performed, and
 -- returns a cuda tensor as input to the model and the augmentations used
 function M:preprocess(path, augmentations)
-  self:checkAugmentations(augmentations, {})
   return image.load(path, 3):cuda(), {}
 end
 
@@ -67,6 +66,9 @@ function M:loadAndPreprocessInputs(pathNames, augmentations)
   inputs[1] = first
   for i=2,#pathNames do
     inputs[i], augs[i] = self:preprocess(pathNames[i], augmentations[i])
+  end
+  for i=1,#pathNames do
+    checkAugmentations(augmentations[i], augs[i])
   end
   return inputs, augs
 end

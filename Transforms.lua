@@ -70,19 +70,22 @@ function M.ScaleKeepAspect(size, interpolation)
    end}
 end
 
-function M.Crop(corners, padding)
-   padding = padding or 0
+function M.Crop(corners, pad, mode)
+   pad = pad or 0
+   mode = mode or 'zero'
    return {'crop', function(input)
-      if padding > 0 then
-         local temp = input.new(3, input:size(2) + 2*padding, input:size(3) + 2*padding)
-         temp:zero()
-            :narrow(2, padding+1, input:size(2))
-            :narrow(3, padding+1, input:size(3))
-            :copy(input)
-         input = temp
-      end
-
-      return image.crop(input, corners[1], corners[2], corners[3], corners[4])
+     if pad > 0 then
+       local module
+       if mode == 'reflection' then
+         module = nn.SpatialReflectionPadding(pad, pad, pad, pad):double()
+       elseif mode == 'zero' then
+         module = nn.SpatialZeroPadding(pad, pad, pad, pad):double()
+       else
+         error('unknown mode ' .. mode)
+       end
+       input = module:forward(input)
+     end
+     return image.crop(input, corners[1], corners[2], corners[3], corners[4])
    end}
 end
 
@@ -95,29 +98,18 @@ function M.CenterCrop(size)
    end}
 end
 
--- Random crop from larger image with optional zero padding
-function M.RandomCrop(size, padding)
-   padding = padding or 0
+-- Random crop from larger image with optional padding
+function M.RandomCrop(size, pad, mode)
+   pad = pad or 0
    local a, b = math.random(), math.random()
    return {'crop', function(input)
-      if padding > 0 then
-         local temp = input.new(3, input:size(2) + 2*padding, input:size(3) + 2*padding)
-         temp:zero()
-            :narrow(2, padding+1, input:size(2))
-            :narrow(3, padding+1, input:size(3))
-            :copy(input)
-         input = temp
-      end
-
-      local w, h = input:size(3), input:size(2)
+      local w, h = input:size(3) + 2*pad, input:size(2) + 2*pad
       if w == size and h == size then
          return input
       end
 
       local x1, y1 = math.floor(a * (w - size)), math.floor(b * (h - size))
-      local out = image.crop(input, x1, y1, x1 + size, y1 + size)
-      assert(out:size(2) == size and out:size(3) == size, 'wrong crop size')
-      return out
+      return M.Crop({x1,  y1, x1 + size, y1 + size}, pad, mode)[2](input)
    end}
 end
 
@@ -137,7 +129,7 @@ end
 
 -- Four corner patches and center crop from image and its horizontal reflection
 function M.TenCrop(size)
-   local centerCrop = M.CenterCrop(size)['crop']
+   local centerCrop = M.CenterCrop(size)[2]
    return {'tencrop', function(input)
       local w, h = input:size(3), input:size(2)
 
