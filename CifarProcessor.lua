@@ -1,6 +1,5 @@
 local Transforms = require 'Transforms'
 local Processor = require 'Processor'
-require 'TrueNLLCriterion'
 local M = torch.class('CifarProcessor', 'Processor')
 
 function M:__init(model, processorOpts)
@@ -14,7 +13,7 @@ function M:__init(model, processorOpts)
   self.processorOpts.input = data.data
   self.processorOpts.label = data.labels:cuda()
 
-  self.criterion = nn.TrueNLLCriterion(nil, false):cuda()
+  self.criterion = nn.CrossEntropyCriterion(nil, false):cuda()
 
   if opts.logdir then
     self.graph = gnuplot.pngfigure(opts.logdir .. 'acc.png')

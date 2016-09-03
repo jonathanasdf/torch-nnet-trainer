@@ -5,8 +5,8 @@ function defineBaseOptions(cmd)
 end
 
 function defineTrainingOptions(cmd)
-  cmd:option('-LR', 0.001, 'learning rate')
-  cmd:option('-LRDecay', 0, 'learning rate decay')
+  cmd:option('-learningRate', 0.001, 'learning rate')
+  cmd:option('-learningRateDecay', 0, 'learning rate decay')
   cmd:option('-LRDropEvery', -1, 'reduce learning rate every n epochs')
   cmd:option('-LRDropFactor', 10, 'factor to reduce learning rate')
   cmd:option('-momentum', 0.9, 'momentum')
@@ -39,6 +39,18 @@ function processArgs(cmd)
 
   if not opts.updateEvery then opts.updateEvery = 1 end
   opts.batchCount = opts.batchSize * opts.updateEvery
+
+  if opts.optimState ~= '' then
+    local optimState = torch.load(opts.optimState)
+    opts.learningRate = opts.optimState.learningRate
+    opts.learningRateDecay  = opts.optimState.learningRateDecay
+    opts.momentum = opts.optimState.momentum
+    opts.weightDecay = opts.optimState.weightDecay
+    opts.nesterov = opts.optimState.nesterov
+  end
+  if opts.nesterov == 1 then
+    opts.dampening = 0.0
+  end
 
   if opts.input then
     opts.input = opts.input:split(';')

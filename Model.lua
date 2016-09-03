@@ -47,14 +47,14 @@ local function makeDataParallelTable(model, nGPU)
       local dpt = nn.DataParallelTable(1, true, true)
          :add(model, gpus)
          :threads(function()
+            require 'cudnn'
             require 'resnet'
-            local cudnn = require 'cudnn'
             cudnn.fastest, cudnn.benchmark = fastest, benchmark
          end)
       dpt.gradInput = nil
-      model = dpt:cuda()
+      model = dpt
    end
-   return model
+   return model:cuda()
 end
 
 local function loadSavedModel(filename)
@@ -78,14 +78,14 @@ function M:load(path)
     print('Loading model from file: ' .. path)
     self.model = loadSavedModel(path)
   end
-  self.model = makeDataParallelTable(self.model:cuda(), opts.nGPU)
+  self.model = makeDataParallelTable(self.model, opts.nGPU)
 end
 
 function M:save(filename)
   self:clearState()
   torch.save(filename, self.model)
-  opts.optimState.dfdx = nil
-  torch.save(filename .. '.optimState', opts.optimState)
+  opts.dfdx = nil
+  torch.save(filename .. '.optimstate', opts)
 end
 
 function M:get(index)
@@ -122,7 +122,7 @@ function M:updateModel(loss, cnt)
                 return 0, self.gradParams
               end,
               self.params,
-              opts.optimState)
+              opts)
     self:zeroGradParameters()
   end
 end
@@ -190,26 +190,6 @@ function M:train(trainFn, valFn)
   local pathNames = trainLoader:sample(opts.batchSize)
   local inputs = self.processor:loadAndPreprocessInputs(pathNames)
 
-  if opts.optimState ~= '' then
-    opts.optimState = torch.load(opts.optimState)
-    opts.LR = opts.optimState.learningRate
-    opts.LRDecay = opts.optimState.learningRateDecay
-    opts.momentum = opts.optimState.momentum
-    opts.weightDecay = opts.optimState.weightDecay
-    opts.nesterov = opts.optimState.nesterov
-  else
-    opts.optimState = {
-      learningRate = opts.LR,
-      learningRateDecay = opts.LRDecay,
-      momentum = opts.momentum,
-      weightDecay = opts.weightDecay
-    }
-    if opts.nesterov == 1 then
-      opts.optimState.dampening = 0.0
-      opts.optimState.nesterov = true
-    end
-  end
-
   local signal = require("posix.signal")
   signal.signal(signal.SIGINT, function(signum)
     print("Interrupt!")
@@ -260,8 +240,7 @@ function M:train(trainFn, valFn)
     end
 
     if opts.LRDropEvery ~= -1 and epoch % opts.LRDropEvery == 0 then
-      opts.LR = opts.LR / opts.LRDropFactor
-      opts.optimState.learningRate = opts.LR
+      opts.learningRate = opts.learningRate / opts.LRDropFactor
     end
 
     if opts.logdir then

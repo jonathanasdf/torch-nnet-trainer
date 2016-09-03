@@ -1,6 +1,6 @@
 require 'image'
 
-require 'Utils'
+require 'Model'
 
 local M = torch.class('Processor')
 
@@ -9,9 +9,6 @@ function M:__init(model, processorOpts)
   self.cmd:option('-dropout', -1, 'dropout probability. -1 means leave it untouched')
   self.model = model
   self.processorOpts = self.cmd:parse(processorOpts:split(' ='))
-
-  self.trainFn = bind(self.train, self)
-  self.testFn = bind(self.test, self)
 end
 
 -- nil means anything is fine. {} means no augmentations.
