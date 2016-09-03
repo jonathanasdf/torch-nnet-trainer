@@ -245,10 +245,6 @@ function setDropout(model, p)
 end
 
 function printOutputSizes(model)
-  if torch.isTypeOf(model, 'Model') then
-    printOutputSizes(model.model)
-    return
-  end
   if model.output then
     print(model, #model.output)
   end

@@ -36,13 +36,13 @@ softCriterion = softCriterion:cuda()
 
 local teacher = Model(opts.teacher)
 local student = Model(opts.student)
-local studentLayer = #student.model.modules - opts.matchLayer + 1
-for i=studentLayer+1,#student.model.modules do
-  student.model:remove()
+local studentLayer = #student.module.modules - opts.matchLayer + 1
+for i=studentLayer+1,#student.module.modules do
+  student.module:remove()
 end
-local teacherLayer = #teacher.model.modules - opts.matchLayer + 1
-for i=teacherLayer+1,#teacher.model.modules do
-  student.model:add(teacher:get(i):clone())
+local teacherLayer = #teacher.module.modules - opts.matchLayer + 1
+for i=teacherLayer+1,#teacher.module..modules do
+  student.module:add(teacher.module:get(i):clone())
 end
 student.params, student.gradParams = student:getParameters()
 

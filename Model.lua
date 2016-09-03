@@ -28,12 +28,13 @@ function M:__init(specStr)
   local processorOpts = table.concat(args, ' ')
   self.processor = requirePath(processorPath).new(self, processorOpts)
 
-  setDropout(self.model, processorOpts.dropout)
-  self.model:zeroGradParameters()
-  Parent.__init(self, self.model)
+  setDropout(self.module, processorOpts.dropout)
+  self.module:zeroGradParameters()
+  Parent.__init(self, self.module)
+  self:cuda()
 
   print('=> Model')
-  print(self.model)
+  print(self.module)
 
   self.params, self.gradParams = self:getParameters()
   print('Total parameters: ', self.gradParams:size(1))
@@ -54,7 +55,7 @@ local function makeDataParallelTable(model, nGPU)
       dpt.gradInput = nil
       model = dpt
    end
-   return model:cuda()
+   return model
 end
 
 local function loadSavedModel(filename)
@@ -72,24 +73,24 @@ function M:load(path)
   assert(paths.filep(path), 'File not found: ' .. path)
   if paths.extname(path) == 'lua' then
     print('Creating model from file: ' .. path)
-    self.model = requirePath(path)
-    cudnn.convert(self.model, cudnn)
+    self.module = requirePath(path)
+    cudnn.convert(self.module, cudnn)
   else
     print('Loading model from file: ' .. path)
-    self.model = loadSavedModel(path)
+    self.module = loadSavedModel(path)
   end
-  self.model = makeDataParallelTable(self.model, opts.nGPU)
+  self.module = makeDataParallelTable(self.module, opts.nGPU)
 end
 
 function M:save(filename)
   self:clearState()
-  torch.save(filename, self.model)
+  torch.save(filename, self.module)
   opts.dfdx = nil
   torch.save(filename .. '.optimstate', opts)
 end
 
 function M:get(index)
-  return self.model:get(index)
+  return self.module:get(index)
 end
 
 function M:forward(inputs, deterministic)
@@ -98,18 +99,26 @@ function M:forward(inputs, deterministic)
   else
     self:training()
   end
-  return self.model:forward(inputs)
+  return Parent.forward(self, inputs)
 end
 
-function M:backward(inputs, gradOutputs, gradLayer)
+function M:backward(input, gradOutput, gradLayer)
   if gradLayer then
     -- feed gradients through a specific layer
-    for i=gradLayer,2,-1 do
-      gradOutputs = self:get(i):backward(self:get(i-1).output, gradOutputs)
+    local currentGradOutput = gradOutput
+    local currentModule = self:get(gradLayer)
+    for i=gradLayer-1,1,-1 do
+      local previousModule = self:get(i)
+      currentGradOutput = self:rethrowErrors(currentModule, i+1, 'backward', previousModule.output, currentGradOutput)
+      currentModule.gradInput = currentGradOutput
+      currentModule = previousModule
     end
-    self:get(1):backward(inputs, gradOutputs)
+   currentGradOutput = self:rethrowErrors(currentModule, 1, 'backward', input, currentGradOutput, scale)
+   self.module.gradInput = currentGradOutput
+   self.gradInput = currentGradOutput
+   return currentGradOutput
   else
-    self.model:backward(inputs, gradOutputs)
+    return Parent.backward(self, input, gradOutput)
   end
 end
 

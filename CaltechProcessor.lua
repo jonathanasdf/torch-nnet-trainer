@@ -264,7 +264,7 @@ end
 
 function M:test(pathNames)
   local loss, total = Processor.test(self, pathNames)
-  self:drawROC(pathNames, self.model.model.output[{{}, 2}])
+  self:drawROC(pathNames, self.model.output[{{}, 2}])
   return loss, total
 end
 
