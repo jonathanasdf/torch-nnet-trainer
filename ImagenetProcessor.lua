@@ -62,7 +62,7 @@ function M:preprocess(path, augmentations)
   local augs = {}
   augs[#augs+1] = Transforms.ScaleKeepAspect(self.processorOpts.resize)
   augs[#augs+1] = Transforms.CenterCrop(self.processorOpts.cropSize)
-  img = Transforms.apply(augs, img)
+  img = Transforms.Apply(augs, img)
 
   if self.processorOpts.inceptionPreprocessing then
     img = (img * 255 - 128) / 128

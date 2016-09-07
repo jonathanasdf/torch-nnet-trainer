@@ -77,9 +77,9 @@ function M.Crop(corners, pad, mode)
      if pad > 0 then
        local module
        if mode == 'reflection' then
-         module = nn.SpatialReflectionPadding(pad, pad, pad, pad):double()
+         module = nn.SpatialReflectionPadding(pad, pad, pad, pad):float()
        elseif mode == 'zero' then
-         module = nn.SpatialZeroPadding(pad, pad, pad, pad):double()
+         module = nn.SpatialZeroPadding(pad, pad, pad, pad):float()
        else
          error('unknown mode ' .. mode)
        end
@@ -103,13 +103,9 @@ function M.RandomCrop(size, pad, mode)
    pad = pad or 0
    local a, b = math.random(), math.random()
    return {'crop', function(input)
-      local w, h = input:size(3) + 2*pad, input:size(2) + 2*pad
-      if w == size and h == size then
-         return input
-      end
-
-      local x1, y1 = math.floor(a * (w - size)), math.floor(b * (h - size))
-      return M.Crop({x1,  y1, x1 + size, y1 + size}, pad, mode)[2](input)
+     local w, h = input:size(3) + 2*pad, input:size(2) + 2*pad
+     local x1, y1 = math.floor(a * (w - size + 1)), math.floor(b * (h - size + 1))
+     return M.Crop({x1, y1, x1 + size, y1 + size}, pad, mode)[2](input)
    end}
 end
 

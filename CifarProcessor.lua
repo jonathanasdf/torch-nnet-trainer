@@ -10,7 +10,7 @@ function M:__init(model, processorOpts)
   Processor.__init(self, model, processorOpts)
 
   local data = torch.load('/file1/cifar10/data.t7')
-  self.processorOpts.input = data.data
+  self.processorOpts.input = data.data:float()
   self.processorOpts.label = data.labels:cuda()
 
   self.criterion = nn.CrossEntropyCriterion(nil, false):cuda()
@@ -47,11 +47,12 @@ function M:preprocess(path, augmentations)
         augs[#augs+1] = Transforms.HorizontalFlip(self.processorOpts.flip)
       end
     end
-    augs[#augs+1] = Transforms.Scale(self.processorOpts.imageSize, self.processorOpts.imageSize)
   end
 
   local img = self.processorOpts.input[tonumber(path)]
-  Transforms.Apply(augs, img)
+  img = Transforms.Apply(augs, img)
+  local sz = self.processorOpts.imageSize
+  img = Transforms.Scale(sz, sz)[2](img)
   return img:cuda(), augs
 end
 

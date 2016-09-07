@@ -10,6 +10,7 @@ function M:__init(model, processorOpts)
   self.cmd:option('-flip', 0.5, 'probability to do horizontal flip (for training)')
   self.cmd:option('-negativesWeight', 1, 'relative weight of negative examples')
   self.cmd:option('-drawROC', '', 'set a directory to use for full evaluation')
+  self.cmd:option('-boxes', '', 'file name to bounding box mapping for drawROC')
   self.cmd:option('-name', 'Result', 'name to use on ROC graph')
   Processor.__init(self, model, processorOpts)
 
@@ -26,27 +27,11 @@ function M:__init(model, processorOpts)
   local weights = torch.Tensor{w/(1+w), 1/(1+w)} * 2
   self.criterion = nn.TrueNLLCriterion(weights, false):cuda()
 
-  local matio = require 'matio'
-  matio.use_lua_strings = true
-  local boxes = {
-    matio.load('/file1/caltech10x/val/box.mat'),
-    matio.load('/file1/caltech10x/test5/box.mat')
-  }
-  self.boxes = {}
-  for i=1,#boxes do
-    for j=1,#boxes[i].name_pos do
-      self.boxes[boxes[i].name_pos[j]] = boxes[i].box_pos[j]
-    end
-    for j=1,#boxes[i].name_neg do
-      self.boxes[boxes[i].name_neg[j]] = boxes[i].box_neg[j]
-    end
-  end
-
   if self.processorOpts.drawROC ~= '' then
     if string.sub(self.processorOpts.drawROC, 1, 1) ~= '/' then
       self.processorOpts.drawROC = paths.concat(paths.cwd(), self.processorOpts.drawROC)
     end
-    if opts.testing then
+    if opts.phase == 'test' then
       if opts.epochSize ~= -1 then
         error('sorry, drawROC can only be used with epochSize == -1')
       end
@@ -76,6 +61,22 @@ function M:__init(model, processorOpts)
       self.processorOpts.drawROCDir = self.processorOpts.drawROC .. '/res/'
       os.execute('cat /file1/caltech10x/val/dirs.txt | awk \'{print "' .. self.processorOpts.drawROCDir .. '"$0}\' | xargs mkdir -p')
       os.execute('cat /file1/caltech10x/test5/dirs.txt | awk \'{print "' .. self.processorOpts.drawROCDir .. '"$0}\' | xargs mkdir -p')
+    end
+
+    local matio = require 'matio'
+    matio.use_lua_strings = true
+    local boxes = {}
+    for _, path in ipairs(self.processorOpts.boxes:split(';')) do
+      boxes[#boxes+1] = matio.load(path)
+    end
+    self.boxes = {}
+    for i=1,#boxes do
+      for j=1,#boxes[i].name_pos do
+        self.boxes[boxes[i].name_pos[j]] = boxes[i].box_pos[j]
+      end
+      for j=1,#boxes[i].name_neg do
+        self.boxes[boxes[i].name_neg[j]] = boxes[i].box_neg[j]
+      end
     end
   end
 
@@ -113,14 +114,11 @@ function M:preprocess(path, augmentations)
   if augmentations ~= nil then
     for i=1,#augmentations do
       local name = augmentations[i][1]
-      if name == 'scale' or name == 'hflip' then
+      if name == 'hflip' then
         augs[#augs+1] = augmentations[i]
       end
     end
   else
-    local sz = self.processorOpts.imageSize
-    augs[#augs+1] = Transforms.Scale(sz, sz)
-
     if opts.phase == 'train' then
       if self.processorOpts.flip ~= 0 then
         augs[#augs+1] = Transforms.HorizontalFlip(self.processorOpts.flip)
@@ -129,7 +127,9 @@ function M:preprocess(path, augmentations)
   end
 
   local img = image.load(path, 3)
-  Transforms.Apply(augs, img)
+  local sz = self.processorOpts.imageSize
+  img = Transforms.Scale(sz, sz)[2](img)
+  img = Transforms.Apply(augs, img)
 
   if self.processorOpts.inceptionPreprocessing then
     img = (img * 255 - 128) / 128
@@ -161,14 +161,23 @@ function M:updateStats(pathNames, outputs, labels)
   self.stats:batchAdd(outputs, labels)
 end
 
-function M:processStats()
+function M:getStats()
   local ROC
   if opts.phase ~= 'train' and self.processorOpts.drawROC ~= '' then
     print("Preparing data for drawing ROC...")
     -- remove duplicate boxes
+    local total = 0
+    for file, attr in dirtree(self.processorOpts.drawROCDir) do
+      if attr.mode == 'file' and attr.size > 0 then
+        total = total + 1
+      end
+    end
+    local count = 0
     for file, attr in dirtree(self.processorOpts.drawROCDir) do
       if attr.mode == 'file' and attr.size > 0 then
         os.execute("gawk -i inplace '!a[$0]++' " .. file)
+        count = count + 1
+        xlua.progress(count, total)
       end
     end
 
@@ -249,7 +258,7 @@ function M:drawROC(pathNames, values)
   if self.processorOpts.drawROC ~= '' then
     for i=1,#pathNames do
       local path = pathNames[i]
-      local dataset, set, video, id = path:match("/file1/caltech10x/(.-)/.-/raw/set(.-)_V(.-)_I(.-)_.*")
+      local set, video, id = path:match("set(.-)_V(.-)_I(.-)_")
 
       local filename = self.processorOpts.drawROCDir .. 'set' .. set .. '/V' .. video .. '/I' .. id .. '.txt'
       local file, err = io.open(filename, 'a')

@@ -41,7 +41,7 @@ for i=studentLayer+1,#student.module.modules do
   student.module:remove()
 end
 local teacherLayer = #teacher.module.modules - opts.matchLayer + 1
-for i=teacherLayer+1,#teacher.module..modules do
+for i=teacherLayer+1,#teacher.module.modules do
   student.module:add(teacher.module:get(i):clone())
 end
 student.params, student.gradParams = student:getParameters()

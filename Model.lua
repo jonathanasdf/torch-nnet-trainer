@@ -3,6 +3,7 @@ require 'cunn'
 require 'dpnn'
 require 'gnuplot'
 require 'optim'
+require 'resnet'
 require 'paths'
 
 require 'DataLoader'
@@ -109,11 +110,11 @@ function M:backward(input, gradOutput, gradLayer)
     local currentModule = self:get(gradLayer)
     for i=gradLayer-1,1,-1 do
       local previousModule = self:get(i)
-      currentGradOutput = self:rethrowErrors(currentModule, i+1, 'backward', previousModule.output, currentGradOutput)
+      currentGradOutput = self.module:rethrowErrors(currentModule, i+1, 'backward', previousModule.output, currentGradOutput)
       currentModule.gradInput = currentGradOutput
       currentModule = previousModule
     end
-   currentGradOutput = self:rethrowErrors(currentModule, 1, 'backward', input, currentGradOutput, scale)
+   currentGradOutput = self.module:rethrowErrors(currentModule, 1, 'backward', input, currentGradOutput)
    self.module.gradInput = currentGradOutput
    self.gradInput = currentGradOutput
    return currentGradOutput

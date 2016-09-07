@@ -40,7 +40,7 @@ function processArgs(cmd)
   if not opts.updateEvery then opts.updateEvery = 1 end
   opts.batchCount = opts.batchSize * opts.updateEvery
 
-  if opts.optimState ~= '' then
+  if opts.optimState and opts.optimState ~= '' then
     local optimState = torch.load(opts.optimState)
     opts.learningRate = opts.optimState.learningRate
     opts.learningRateDecay  = opts.optimState.learningRateDecay

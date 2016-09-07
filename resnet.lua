@@ -14,7 +14,7 @@ local BasicResidualModule, Parent = torch.class('nn.BasicResidualModule', 'nn.De
 function BasicResidualModule:__init(nInputPlane, n, stride, dropout)
   self.nInputPlane = nInputPlane
   self.n = n
-  self.stride = stride
+  self.stride = stride or 1
   self.dropout = dropout or 0
 
   self.module = nn.Sequential()
@@ -38,9 +38,9 @@ function BasicResidualModule:__init(nInputPlane, n, stride, dropout)
   Parent.__init(self, self.module)
 end
 
---function BasicResidualModule:__tostring__()
---  return string.format('%s(%d, %d, %d)', torch.type(self), self.nInputPlane, self.n, self.stride)
---end
+function BasicResidualModule:__tostring__()
+  return string.format('%s(%d, %d, %d)', torch.type(self), self.nInputPlane, self.n, self.stride)
+end
 
 
 local BottleneckResidualModule, Parent = torch.class('nn.BottleneckResidualModule', 'nn.Decorator')
@@ -48,7 +48,7 @@ function BottleneckResidualModule:__init(nInputPlane, nSqueeze, nExpand, stride,
   self.nInputPlane = nInputPlane
   self.nSqueeze = nSqueeze
   self.nExpand = nExpand
-  self.stride = stride
+  self.stride = stride or 1
   self.dropout = dropout or 0
 
   self.module = nn.Sequential()
@@ -80,13 +80,14 @@ end
 
 
 local FireResidualModule, Parent = torch.class('nn.FireResidualModule', 'nn.Decorator')
-function FireResidualModule:__init(nInputPlane, s1x1, e1x1, e3x3)
+function FireResidualModule:__init(nInputPlane, s1x1, e1x1, e3x3, stride)
   self.nInputPlane = nInputPlane
   self.s1x1 = s1x1
   self.e1x1 = e1x1
   self.e3x3 = e3x3
+  self.stride = stride or 1
 
-  local fireModule = nn.FireModule(nInputPlane, s1x1, e1x1, e3x3, 'ReLU', true)
+  local fireModule = nn.FireModule(nInputPlane, s1x1, e1x1, e3x3)
   local m = fireModule.modules[1]
   assert(torch.type(m.modules[#m.modules]) == 'nn.ReLU')
   m:remove()
@@ -100,8 +101,11 @@ function FireResidualModule:__init(nInputPlane, s1x1, e1x1, e3x3)
   m:add(nn.SpatialBatchNormalization(nInputPlane)):add(nn.ReLU(true))
 
   self.block:add(fireModule)
+  if self.stride > 1 then
+    self.block:add(nn.SpatialMaxPooling(3, 3, stride, stride, 1, 1))
+  end
 
-  self.shortcut = shortcut(nInputPlane, e1x1+e3x3, 1)
+  self.shortcut = shortcut(nInputPlane, e1x1+e3x3, stride)
 
   self.module = nn.Sequential()
   self.module:add(nn.ConcatTable():add(self.block):add(self.shortcut))
@@ -111,5 +115,5 @@ function FireResidualModule:__init(nInputPlane, s1x1, e1x1, e3x3)
 end
 
 function FireResidualModule:__tostring__()
-  return string.format('%s(%d, %d, %d, %d)', torch.type(self), self.nInputPlane, self.s1x1, self.e1x1, self.e3x3)
+  return string.format('%s(%d, %d, %d, %d, %d)', torch.type(self), self.nInputPlane, self.s1x1, self.e1x1, self.e3x3, self.stride)
 end

@@ -43,7 +43,7 @@ model:run(dataloader,
           opts.batchSize,
           opts.epochSize,
           false,               -- randomSample,
-          model.processor.testFn,
+          bind(model.processor.test, model.processor),
           accResults,
           state.completed + 1) -- startBatch
 if opts.cacheEvery ~= -1 then
