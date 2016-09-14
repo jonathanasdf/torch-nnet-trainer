@@ -71,11 +71,11 @@ function M:loadAndPreprocessInputs(pathNames, augmentations)
 end
 
 -- return the labels associated with the list of paths as cuda tensors
-function M:getLabels(pathNames)
+function M:getLabels(pathNames, outputs)
   error('getLabels is not defined.')
 end
 
-function M:forward(inputs, deterministic)
+function M:forward(pathNames, inputs, deterministic)
   return self.model:forward(inputs, deterministic)
 end
 
@@ -99,25 +99,22 @@ function M:train(pathNames)
     error('this function assumes criterion.sizeAverage == false because we divide through by batchCount.')
   end
 
-  local labels = self:getLabels(pathNames)
   local inputs = self:loadAndPreprocessInputs(pathNames)
-
-  local outputs = self:forward(inputs)
+  local outputs = self:forward(pathNames, inputs)
+  local labels = self:getLabels(pathNames, outputs)
   local loss = self.criterion:forward(outputs, labels)
   local gradOutputs = self.criterion:backward(outputs, labels)
   self:backward(inputs, gradOutputs / opts.batchCount)
 
   self:updateStats(pathNames, outputs, labels)
-
   return loss, labels:size(1)
 end
 
 -- return {aggregatedLoss, #instancesTested}
 function M:test(pathNames)
-  local labels = self:getLabels(pathNames)
   local inputs = self:loadAndPreprocessInputs(pathNames)
-
-  local outputs = self:forward(inputs, true)
+  local outputs = self:forward(pathNames, inputs, true)
+  local labels = self:getLabels(pathNames, outputs)
   local loss = self.criterion:forward(outputs, labels)
 
   self:updateStats(pathNames, outputs, labels)

@@ -56,7 +56,7 @@ function M:preprocess(path, augmentations)
   return img:cuda(), augs
 end
 
-function M:getLabels(pathNames)
+function M:getLabels(pathNames, outputs)
   local labels = torch.CudaTensor(#pathNames)
   for i=1,#pathNames do
     labels[i] = self.processorOpts.label[tonumber(pathNames[i])]

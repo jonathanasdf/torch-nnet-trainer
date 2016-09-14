@@ -51,7 +51,6 @@ local function train(pathNames)
     error('this function assumes criterion.sizeAverage == false because we divide through by batchCount.')
   end
 
-  local labels = student.processor:getLabels(pathNames)
   local studentInputs, augmentations = student.processor:loadAndPreprocessInputs(pathNames)
 
   local teacherInputs = studentInputs
@@ -61,8 +60,7 @@ local function train(pathNames)
 
   local teacherLayerOutputs, outputs, variance=1
   if opts.dropoutBayes > 1 then
-    teacher:training()
-    teacher:forward(teacherInputs)
+    teacher.processor:forward(pathNames, teacherInputs)
     local mean = teacher:get(teacherLayer).output
     local sumsqr = torch.cmul(mean, mean)
     outputs = mean.new(opts.dropoutBayes, mean:size(1), mean:size(2))
@@ -90,11 +88,11 @@ local function train(pathNames)
     variance = torch.cinv(torch.exp(-variance) + 1)*2 - 0.5  --pass into sigmoid function
     teacherLayerOutputs = mean
   else
-    teacher:forward(teacherInputs, true)
+    teacher.processor:forward(pathNames, teacherInputs, true)
     teacherLayerOutputs = teacher:get(teacherLayer).output
   end
 
-  local studentOutputs = student.processor:forward(studentInputs)
+  local studentOutputs = student.processor:forward(pathNames, studentInputs)
   local studentLayerOutputs = student:get(studentLayer).output
 
   if opts.useCOV then
@@ -117,6 +115,7 @@ local function train(pathNames)
   student.processor:backward(studentInputs, softGradOutputs / opts.batchCount, studentLayer)
 
   -- Hard labels
+  local labels = student.processor:getLabels(pathNames, studentOutputs)
   local hardLoss = student.processor.criterion:forward(studentOutputs, labels)*opts.lambda
   local hardGradOutputs = student.processor.criterion:backward(studentOutputs, labels)*opts.lambda
   student.processor:backward(studentInputs, hardGradOutputs / opts.batchCount)

@@ -141,7 +141,7 @@ function M:preprocess(path, augmentations)
   return img:cuda(), augs
 end
 
-function M:getLabels(pathNames)
+function M:getLabels(pathNames, outputs)
   local labels = torch.Tensor(#pathNames)
   for i=1,#pathNames do
     labels[i] = pathNames[i]:find('neg') and 1 or 2

@@ -17,11 +17,10 @@ setPhase('test')
 local model = Model(opts.model)
 
 local function getData(pathNames)
-  local labels = model.processor:getLabels(pathNames)
   local inputs = model.processor:loadAndPreprocessInputs(pathNames)
-  model.processor:forward(inputs, true)
+  model.processor:forward(pathNames, inputs, true)
   local outputs = findModuleByName(model, opts.layer).output:clone()
-
+  local labels = model.processor:getLabels(pathNames, outputs)
   return convertTensorToSVMLight(labels, outputs)
 end
 
