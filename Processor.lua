@@ -11,6 +11,22 @@ function M:__init(model, processorOpts)
   self.processorOpts = self.cmd:parse(processorOpts:split(' ='))
 end
 
+-- Only called by TrainStudentModel.lua
+function M:getStudentCriterion()
+  local softCriterion
+  if opts.useCOV then
+    if opts.dropoutBayes == 1 then
+      error('useCOV requires dropoutBayes. Please set useMSE if not using dropout.')
+    end
+    softCriterion = MSECovCriterion(false)
+  elseif opts.useMSE then
+    softCriterion = nn.MSECriterion(false)
+  else
+    softCriterion = SoftCrossEntropyCriterion(opts.T, false)
+  end
+  return softCriterion:cuda()
+end
+
 -- nil means anything is fine. {} means no augmentations.
 local function checkAugmentations(a, b)
   if a == nil or b == nil then
@@ -104,10 +120,17 @@ function M:train(pathNames)
   local labels = self:getLabels(pathNames, outputs)
   local loss = self.criterion:forward(outputs, labels)
   local gradOutputs = self.criterion:backward(outputs, labels)
-  self:backward(inputs, gradOutputs / opts.batchCount)
+  if type(gradOutputs) == 'table' then
+    for i=1,#gradOutputs do
+      gradOutputs[i] = gradOutputs[i] / opts.batchCount
+    end
+  else
+    gradOutputs = gradOutputs / opts.batchCount
+  end
+  self:backward(inputs, gradOutputs)
 
   self:updateStats(pathNames, outputs, labels)
-  return loss, labels:size(1)
+  return loss, #pathNames
 end
 
 -- return {aggregatedLoss, #instancesTested}
@@ -115,7 +138,7 @@ function M:test(pathNames)
   local inputs = self:loadAndPreprocessInputs(pathNames)
   local outputs = self:forward(pathNames, inputs, true)
   local labels = self:getLabels(pathNames, outputs)
-  local loss = self.criterion:forward(outputs, labels)
+  local loss = self.criterion and self.criterion:forward(outputs, labels) or 0
 
   self:updateStats(pathNames, outputs, labels)
 

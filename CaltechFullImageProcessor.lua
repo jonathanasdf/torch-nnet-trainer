@@ -1,10 +1,10 @@
 require 'TrueNLLCriterion'
-local Processor = require 'Processor'
+local CaltechProcessor = require 'CaltechProcessor'
 local M = torch.class('CaltechFullImageProcessor', 'CaltechProcessor')
 
 function M:__init(model, processorOpts)
   self.cmd:option('-boxesPerImage', 100, 'Number of boxes output per image.')
-  Processor.__init(self, model, processorOpts)
+  CaltechProcessor.__init(self, model, processorOpts)
 
   if self.processorOpts.drawROC ~= '' then
     error('Sorry, drawROC does not work with this processor.')
@@ -37,11 +37,13 @@ function M:getLabels(pathNames, outputs)
   local boxes = outputs[1]
   local n = self.processorOpts.boxesPerImage
   local check_gt = requirePath('/data/rpn/datasets/check_gt.lua')
-  local closest = torch.CudaTensor(#pathNames, 4*n)
+  local closest = torch.CudaTensor(#pathNames, n, 4)
   local labels = torch.CudaTensor(#pathNames, n)
   for i=1,#pathNames do
-    closest[i], labels[i] = check_gt(pathNames[i], boxes[i])
+    closest[i], labels[i] = check_gt(paths.basename(pathNames[i]), boxes[i])
   end
+  -- labels is {0, 1} but in torch we need it to be 1-indexed
+  labels = labels + 1
   return {closest, labels:view(-1)}
 end
 

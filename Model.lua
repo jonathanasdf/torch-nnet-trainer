@@ -39,7 +39,7 @@ function M:__init(specStr)
   print(self.module)
 
   self.params, self.gradParams = self:getParameters()
-  print('Total parameters: ', self.gradParams:size(1))
+  print('Total parameters: ', self.gradParams:dim() > 0 and self.gradParams:size(1) or 0)
 end
 
 local function makeDataParallelTable(model, nGPU)

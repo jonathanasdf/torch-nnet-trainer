@@ -6,28 +6,44 @@ function M:__init(model, processorOpts)
   Processor.__init(self, model, processorOpts)
 end
 
+-- Only called by TrainStudentModel.lua
+function M:getStudentCriterion()
+  local softCriterion = Processor.getStudentCriterion(self)
+  local smoothL1Criterion = nn.SmoothL1Criterion()
+  smoothL1Criterion.sizeAverage = false
+  local criterion = nn.ParallelCriterion()
+    :add(smoothL1Criterion)
+    :add(softCriterion)
+  criterion.sizeAverage = false
+  return criterion:cuda()
+end
+
+local t = torch.CudaTensor(1)
 function M:preprocess(path, augmentations)
-  local img = image.load(path, 3)
-  return img:cuda(), {}
+  return t, {}
 end
 
 function M:getLabels(pathNames, outputs)
   local n = self.processorOpts.boxesPerImage
-  local boxes = torch.CudaTensor(#pathNames, n*4)
+  local boxes = torch.CudaTensor(#pathNames, n, 4)
   local scores = torch.CudaTensor(#pathNames, n)
   local matio = require 'matio'
   matio.use_lua_strings = true
   for i=1,#pathNames do
-    local d = matio.load(pathNames[i] .. '.mat')
-    boxes[i] = d.bf_boxes:view(-1)
+    local folder = paths.dirname(paths.dirname(pathNames[i]))
+    local d = matio.load(folder .. '/gt/' .. paths.basename(pathNames[i]) .. '.mat')
+    boxes[i] = d.bf_boxes
     scores[i] = d.bf_scores
   end
   return {boxes, scores:view(-1)}
 end
 
 function M:forward(pathNames, inputs, deterministic)
-  self.model:get(1).output = getLabels(pathNames)
-  return self.model:get(1).output
+  return Processor.forward(self, pathNames, self:getLabels(pathNames), deterministic)
+end
+
+function M:train()
+  error('Cannot train RPNProvider.')
 end
 
 return M

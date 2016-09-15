@@ -14,6 +14,7 @@ defineBaseOptions(cmd)      -- defined in Utils.lua
 defineTrainingOptions(cmd)  -- defined in Utils.lua
 cmd:option('-useSameInputs', false, 'the teacher and student use the same inputs, so no need to load it twice')
 cmd:option('-matchLayer', 2, 'which layers to match outputs, counting from the end. Defaults to second last layer (i.e. input to SoftMax layer)')
+cmd:option('-copyTeacherLayers', false, 'whether to copy teacher layers after the matchLayer')
 cmd:option('-useMSE', false, 'use mean squared error instead of soft cross entropy')
 cmd:option('-T', 2, 'temperature for soft cross entropy')
 cmd:option('-lambda', 0.5, 'hard target relative weight')
@@ -21,18 +22,6 @@ cmd:option('-dropoutBayes', 1, 'forward multiple time to achieve dropout as Baye
 cmd:option('-useCOV', false, 'use Vishnu\'s covariance weighted error when using dropoutBayes')
 processArgs(cmd)
 
-local softCriterion
-if opts.useCOV then
-  if opts.dropoutBayes == 1 then
-    error('useCOV requires dropoutBayes. Please set useMSE if not using dropout.')
-  end
-  softCriterion = MSECovCriterion(false)
-elseif opts.useMSE then
-  softCriterion = nn.MSECriterion(false)
-else
-  softCriterion = SoftCrossEntropyCriterion(opts.T, false)
-end
-softCriterion = softCriterion:cuda()
 
 local teacher = Model(opts.teacher)
 if torch.type(teacher.module) == 'nn.DataParallelTable' then
@@ -45,19 +34,24 @@ while #studentContainer.modules == 1 do
   studentContainer = studentContainer.modules[1]
 end
 local studentLayer = #studentContainer.modules - opts.matchLayer + 1
-for i=studentLayer+1,#studentContainer.modules do
-  studentContainer:remove()
-end
 
 local teacherContainer = teacher
 while #teacherContainer.modules == 1 do
   teacherContainer = teacherContainer.modules[1]
 end
 local teacherLayer = #teacherContainer.modules - opts.matchLayer + 1
-for i=teacherLayer+1,#teacherContainer.modules do
-  studentContainer:add(teacherContainer:get(i):clone())
+
+if opts.copyTeacherLayers then
+  for i=studentLayer+1,#studentContainer.modules do
+    studentContainer:remove()
+  end
+  for i=teacherLayer+1,#teacherContainer.modules do
+    studentContainer:add(teacherContainer:get(i):clone())
+  end
+  student.params, student.gradParams = student:getParameters()
 end
-student.params, student.gradParams = student:getParameters()
+
+local softCriterion = teacher.processor:getStudentCriterion()
 
 local function train(pathNames)
   if softCriterion.sizeAverage ~= false or student.processor.criterion.sizeAverage ~= false then
@@ -129,17 +123,30 @@ local function train(pathNames)
   if opts.dropoutBayes > 1 and not(opts.useCOV) then
     softGradOutputs = torch.cdiv(softGradOutputs, variance)
   end
-  student.processor:backward(studentInputs, softGradOutputs / opts.batchCount, studentLayer)
+  if type(softGradOutputs) == 'table' then
+    for i=1,#softGradOutputs do
+      softGradOutputs[i] = softGradOutputs[i] / opts.batchCount
+    end
+  else
+    softGradOutputs = softGradOutputs / opts.batchCount
+  end
+  student.processor:backward(studentInputs, softGradOutputs, studentLayer)
 
   -- Hard labels
   local labels = student.processor:getLabels(pathNames, studentOutputs)
-  local hardLoss = student.processor.criterion:forward(studentOutputs, labels)*opts.lambda
-  local hardGradOutputs = student.processor.criterion:backward(studentOutputs, labels)*opts.lambda
-  student.processor:backward(studentInputs, hardGradOutputs / opts.batchCount)
+  local hardLoss = student.processor.criterion:forward(studentOutputs, labels) * opts.lambda
+  local hardGradOutputs = student.processor.criterion:backward(studentOutputs, labels)
+  if type(hardGradOutputs) == 'table' then
+    for i=1,#hardGradOutputs do
+      hardGradOutputs[i] = hardGradOutputs[i] * opts.lambda / opts.batchCount
+    end
+  else
+    hardGradOutputs = hardGradOutputs * opts.lambda / opts.batchCount
+  end
+  student.processor:backward(studentInputs, hardGradOutputs)
 
   student.processor:updateStats(pathNames, studentOutputs, labels)
-
-  return softLoss + hardLoss, labels:size(1)
+  return softLoss + hardLoss, #pathNames
 end
 
 student:train(train)
