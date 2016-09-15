@@ -244,6 +244,21 @@ function setDropout(model, p)
   end
 end
 
+function hasDropout(model)
+  if torch.isTypeOf(model, 'nn.Dropout') then
+    return true
+  end
+  if not(model.modules) then
+    return false
+  end
+  for i=1,#model.modules do
+    if hasDropout(model.modules[i]) then
+      return true
+    end
+  end
+  return false
+end
+
 function printOutputSizes(model)
   if model.output then
     print(model, #model.output)

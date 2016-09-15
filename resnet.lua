@@ -107,7 +107,6 @@ function FireResidualModule:__init(nInputPlane, s1x1, e1x1, e3x3, stride)
 
   self.shortcut = shortcut(nInputPlane, e1x1+e3x3, stride)
 
-  self.module = nn.Sequential()
   self.module:add(nn.ConcatTable():add(self.block):add(self.shortcut))
   self.module:add(nn.CAddTable(true))
 

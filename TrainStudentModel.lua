@@ -35,14 +35,27 @@ end
 softCriterion = softCriterion:cuda()
 
 local teacher = Model(opts.teacher)
-local student = Model(opts.student)
-local studentLayer = #student.module.modules - opts.matchLayer + 1
-for i=studentLayer+1,#student.module.modules do
-  student.module:remove()
+if torch.type(teacher.module) == 'nn.DataParallelTable' then
+  teacher.module = teacher.module:get(1)
 end
-local teacherLayer = #teacher.module.modules - opts.matchLayer + 1
-for i=teacherLayer+1,#teacher.module.modules do
-  student.module:add(teacher.module:get(i):clone())
+local student = Model(opts.student)
+
+local studentContainer = student
+while #studentContainer.modules == 1 do
+  studentContainer = studentContainer.modules[1]
+end
+local studentLayer = #studentContainer.modules - opts.matchLayer + 1
+for i=studentLayer+1,#studentContainer.modules do
+  studentContainer:remove()
+end
+
+local teacherContainer = teacher
+while #teacherContainer.modules == 1 do
+  teacherContainer = teacherContainer.modules[1]
+end
+local teacherLayer = #teacherContainer.modules - opts.matchLayer + 1
+for i=teacherLayer+1,#teacherContainer.modules do
+  studentContainer:add(teacherContainer:get(i):clone())
 end
 student.params, student.gradParams = student:getParameters()
 
@@ -61,22 +74,26 @@ local function train(pathNames)
   local teacherLayerOutputs, outputs, variance=1
   if opts.dropoutBayes > 1 then
     teacher.processor:forward(pathNames, teacherInputs)
-    local mean = teacher:get(teacherLayer).output
+    local mean = teacherContainer:get(teacherLayer).output
     local sumsqr = torch.cmul(mean, mean)
     outputs = mean.new(opts.dropoutBayes, mean:size(1), mean:size(2))
     outputs[1] = mean
 
-    local l
+    local start
     for l=1,teacherLayer do
-      if hasDropout(teacher:get(l)) then
+      if hasDropout(teacherContainer:get(l)) then
+        start = l-1
         break
       end
     end
-    local out_init = teacher:get(l-1).output
+    if start == nil then
+      start = teacherLayer
+    end
+    local out_init = teacherContainer:get(start).output
     for i=2,opts.dropoutBayes do
       local out = out_init
-      for j=l,teacherLayer do
-        out = teacher:get(j):forward(out)
+      for j=start+1,teacherLayer do
+        out = teacherContainer:get(j):forward(out)
       end
       mean = mean + out
       sumsqr = sumsqr + torch.cmul(out, out)
@@ -89,11 +106,11 @@ local function train(pathNames)
     teacherLayerOutputs = mean
   else
     teacher.processor:forward(pathNames, teacherInputs, true)
-    teacherLayerOutputs = teacher:get(teacherLayer).output
+    teacherLayerOutputs = teacherContainer:get(teacherLayer).output
   end
 
   local studentOutputs = student.processor:forward(pathNames, studentInputs)
-  local studentLayerOutputs = student:get(studentLayer).output
+  local studentLayerOutputs = studentContainer:get(studentLayer).output
 
   if opts.useCOV then
     local cov = teacherLayerOutputs.new(teacherLayerOutputs:size(1), teacherLayerOutputs:size(2), teacherLayerOutputs:size(2)):zero()

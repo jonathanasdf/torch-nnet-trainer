@@ -24,6 +24,7 @@ function M:__init(specStr)
   assert(paths.filep(path), 'Cannot find model ' .. path)
   assert(paths.filep(processorPath), 'Cannot find processor ' .. processorPath)
 
+  nn.DataParallelTable.deserializeNGPUs = opts.nGPU
   self:load(path)
 
   local processorOpts = table.concat(args, ' ')
