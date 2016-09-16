@@ -22,7 +22,9 @@ function M:getStudentCriterion()
   elseif opts.useMSE then
     softCriterion = nn.MSECriterion(false)
   else
-    softCriterion = SoftCrossEntropyCriterion(opts.T, false)
+    -- TODO: SoftCrossEntropyCriterion needs to be logified
+    -- softCriterion = SoftCrossEntropyCriterion(opts.T, false)
+    softCriterion = nn.MSECriterion(false)
   end
   return softCriterion:cuda()
 end

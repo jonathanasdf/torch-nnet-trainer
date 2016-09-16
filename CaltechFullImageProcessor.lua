@@ -1,20 +1,28 @@
-require 'TrueNLLCriterion'
 local CaltechProcessor = require 'CaltechProcessor'
 local M = torch.class('CaltechFullImageProcessor', 'CaltechProcessor')
 
 function M:__init(model, processorOpts)
   self.cmd:option('-boxesPerImage', 100, 'Number of boxes output per image.')
+  self.cmd:option('-criterionWeights', '', 'semicolon separated weights for pos/neg')
+
   CaltechProcessor.__init(self, model, processorOpts)
 
   if self.processorOpts.drawROC ~= '' then
     error('Sorry, drawROC does not work with this processor.')
   end
 
+  if self.processorOpts.criterionWeights then
+    self.processorOpts.criterionWeights = torch.Tensor(self.processorOpts.criterionWeights:split(';'))
+    for i=1,self.processorOpts.criterionWeights:size(1) do
+      self.processorOpts.criterionWeights[i] = tonumber(self.processorOpts.criterionWeights[i])
+    end
+  end
+
   local smoothL1Criterion = nn.SmoothL1Criterion()
   smoothL1Criterion.sizeAverage = false
   self.criterion = nn.ParallelCriterion()
     :add(smoothL1Criterion)
-    :add(nn.TrueNLLCriterion(nil, false))
+    :add(nn.CrossEntropyCriterion(self.processorOpts.criterionWeights, false))
     :cuda()
   self.criterion.sizeAverage = false
 end
@@ -33,10 +41,10 @@ end
 
 -- Assumes outputs is a table with {boxes, scores for Y/N classes}
 -- Returned labels = {closest_box, overlap > 0.5}
+local check_gt = requirePath('/data/rpn/datasets/check_gt.lua')
 function M:getLabels(pathNames, outputs)
   local boxes = outputs[1]
   local n = self.processorOpts.boxesPerImage
-  local check_gt = requirePath('/data/rpn/datasets/check_gt.lua')
   local closest = torch.CudaTensor(#pathNames, n, 4)
   local labels = torch.CudaTensor(#pathNames, n)
   for i=1,#pathNames do
