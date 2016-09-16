@@ -22,11 +22,11 @@ cmd:option('-dropoutBayes', 1, 'forward multiple time to achieve dropout as Baye
 cmd:option('-useCOV', false, 'use Vishnu\'s covariance weighted error when using dropoutBayes')
 processArgs(cmd)
 
+if opts.nGPU > 1 then
+  error('TrainStudentModel can only use nGPU = 1.')
+end
 
 local teacher = Model(opts.teacher)
-if torch.type(teacher.module) == 'nn.DataParallelTable' then
-  teacher.module = teacher.module:get(1)
-end
 local student = Model(opts.student)
 
 local studentContainer = student

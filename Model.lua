@@ -55,7 +55,7 @@ local function makeDataParallelTable(model, nGPU)
             cudnn.fastest, cudnn.benchmark = fastest, benchmark
          end)
       dpt.gradInput = nil
-      model = dpt
+      model = dpt:cuda()
    end
    return model
 end
