@@ -1,8 +1,8 @@
 package.path = package.path .. ';/home/jshen/scripts/?.lua'
 
 require 'Model'
-require 'MSECovCriterion'
-require 'SoftCrossEntropyCriterion'
+require 'nn.MSECovCriterion'
+require 'nn.SoftCrossEntropyCriterion'
 require 'Utils'
 
 local cmd = torch.CmdLine()

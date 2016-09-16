@@ -3,7 +3,6 @@ require 'cunn'
 require 'dpnn'
 require 'gnuplot'
 require 'optim'
-require 'resnet'
 require 'paths'
 
 require 'DataLoader'
@@ -51,7 +50,6 @@ local function makeDataParallelTable(model, nGPU)
          :add(model, gpus)
          :threads(function()
             require 'cudnn'
-            require 'resnet'
             cudnn.fastest, cudnn.benchmark = fastest, benchmark
          end)
       dpt.gradInput = nil

@@ -1,4 +1,4 @@
-require 'TrueNLLCriterion'
+require 'nn.TrueNLLCriterion'
 local Transforms = require 'Transforms'
 local Processor = require 'Processor'
 local M = torch.class('ImageNetProcessor', 'Processor')

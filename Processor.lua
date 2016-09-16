@@ -18,12 +18,12 @@ function M:getStudentCriterion()
     if opts.dropoutBayes == 1 then
       error('useCOV requires dropoutBayes. Please set useMSE if not using dropout.')
     end
-    softCriterion = MSECovCriterion(false)
+    softCriterion = nn.MSECovCriterion(false)
   elseif opts.useMSE then
     softCriterion = nn.MSECriterion(false)
   else
     -- TODO: SoftCrossEntropyCriterion needs to be logified
-    -- softCriterion = SoftCrossEntropyCriterion(opts.T, false)
+    -- softCriterion = nn.SoftCrossEntropyCriterion(opts.T, false)
     softCriterion = nn.MSECriterion(false)
   end
   return softCriterion:cuda()
