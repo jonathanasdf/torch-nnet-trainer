@@ -1,3 +1,4 @@
+local Processor = require 'Processor'
 local CaltechProcessor = require 'CaltechProcessor'
 local M = torch.class('CaltechFullImageProcessor', 'CaltechProcessor')
 
@@ -7,15 +8,13 @@ function M:__init(model, processorOpts)
 
   CaltechProcessor.__init(self, model, processorOpts)
 
-  if self.processorOpts.drawROC ~= '' then
-    error('Sorry, drawROC does not work with this processor.')
-  end
-
-  if self.processorOpts.criterionWeights then
+  if self.processorOpts.criterionWeights and self.processorOpts.criterionWeights ~= '' then
     self.processorOpts.criterionWeights = torch.Tensor(self.processorOpts.criterionWeights:split(';'))
     for i=1,self.processorOpts.criterionWeights:size(1) do
       self.processorOpts.criterionWeights[i] = tonumber(self.processorOpts.criterionWeights[i])
     end
+  else
+    self.processorOpts.criterionWeights = nil
   end
 
   local smoothL1Criterion = nn.SmoothL1Criterion()
@@ -25,6 +24,9 @@ function M:__init(model, processorOpts)
     :add(nn.CrossEntropyCriterion(self.processorOpts.criterionWeights, false))
     :cuda()
   self.criterion.sizeAverage = false
+end
+
+function M:prepareBoxes()
 end
 
 function M:preprocess(path, augmentations)
@@ -57,6 +59,35 @@ end
 
 function M:updateStats(pathNames, outputs, labels)
   self.stats:batchAdd(outputs[2], labels[2])
+end
+
+-- values length is batchSize * boxesPerImage
+function M:drawROC(pathNames, values)
+  if self.processorOpts.drawROC ~= '' then
+    local n = self.processorOpts.boxesPerImage;
+    for i=1,#pathNames do
+      local path = pathNames[i]
+      local set, video, id = path:match("set(.-)_V(.-)_I(.-)%.")
+
+      local filename = self.processorOpts.drawROCDir .. 'set' .. set .. '/V' .. video .. '/I' .. id .. '.txt'
+      local file, err = io.open(filename, 'a')
+      if not(file) then error(err) end
+
+      local boxes = self.model.output[1][i]
+      assert(boxes:size(1) == n)
+      assert(values:size(1) == #pathNames * n)
+      for j=1,n do
+        file:write(boxes[j][1]-1, ' ', boxes[j][2]-1, ' ', boxes[j][3]-boxes[j][1]+1, ' ', boxes[j][4]-boxes[j][2]+1, ' ', values[(i-1)*n+j], '\n')
+      end
+      file:close()
+    end
+  end
+end
+
+function M:test(pathNames)
+  local loss, total = Processor.test(self, pathNames)
+  self:drawROC(pathNames, self.model.output[2][{{}, 2}])
+  return loss, total
 end
 
 return M

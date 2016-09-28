@@ -1,5 +1,5 @@
 require 'Utils'
-local function nms(boxes, scores, overlap)
+function nms(boxes, scores, overlap)
   local keep = {}
 
   local x1 = boxes[{{},1}]
@@ -24,4 +24,29 @@ local function nms(boxes, scores, overlap)
   return torch.LongTensor(keep)
 end
 
-return nms
+function nmsCaltech(dir)
+  for filename, attr in dirtree(dir) do
+    if attr.mode == 'file' and attr.size > 0 then
+      local lines = 0
+      for _ in io.lines(filename) do
+        lines = lines + 1
+      end
+      local boxes = torch.FloatTensor(lines, 5)
+      local df = torch.DiskFile(filename, 'r')
+      df:readFloat(boxes:storage())
+      df:close()
+      boxes[{{}, {3, 4}}] = boxes[{{}, {3, 4}}] + boxes[{{}, {1, 2}}];
+      boxes[{{}, {1, 2}}] = boxes[{{}, {1, 2}}] + 1;
+      local indexes = nms(boxes[{{}, {1, 4}}], boxes[{{}, 5}], 0.5)
+
+      local file, err = io.open(filename, 'w')
+      if not(file) then error(err) end
+
+      for i=1, indexes:size(1) do
+        local box = boxes[indexes[i]]
+        file:write(box[1]-1, ' ',  box[2]-1, ' ', box[3]-box[1]+1, ' ', box[4]-box[2]+1, ' ', box[5], '\n')
+      end
+      file:close()
+    end
+  end
+end

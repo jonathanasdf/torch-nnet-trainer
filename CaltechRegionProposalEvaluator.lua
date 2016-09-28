@@ -7,6 +7,9 @@ function M:__init(model, processorOpts)
   if self.processorOpts.drawROC == '' then
     error('CaltechRegionProposalEvaluator requires drawROC.')
   end
+  if not self.processorOpts.nonms then
+    print('WARNING: you might want to set nonms.')
+  end
 end
 
 function M:preprocess()

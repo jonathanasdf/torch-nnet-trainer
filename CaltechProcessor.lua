@@ -1,4 +1,5 @@
 require 'nn.TrueNLLCriterion'
+require 'nms'
 local Transforms = require 'Transforms'
 local Processor = require 'Processor'
 local M = torch.class('CaltechProcessor', 'Processor')
@@ -12,6 +13,7 @@ function M:__init(model, processorOpts)
   self.cmd:option('-drawROC', '', 'set a directory to use for full evaluation')
   self.cmd:option('-boxes', '', 'file name to bounding box mapping for drawROC')
   self.cmd:option('-name', 'Result', 'name to use on ROC graph')
+  self.cmd:option('-nonms', false, 'dont apply nms to boxes for drawROC')
   Processor.__init(self, model, processorOpts)
 
   if self.processorOpts.inceptionPreprocessing then
@@ -28,56 +30,7 @@ function M:__init(model, processorOpts)
   self.criterion = nn.TrueNLLCriterion(weights, false):cuda()
 
   if self.processorOpts.drawROC ~= '' then
-    if string.sub(self.processorOpts.drawROC, 1, 1) ~= '/' then
-      self.processorOpts.drawROC = paths.concat(paths.cwd(), self.processorOpts.drawROC)
-    end
-    if opts.phase == 'test' then
-      if opts.epochSize ~= -1 then
-        error('sorry, drawROC can only be used with epochSize == -1')
-      end
-    else -- val
-      if opts.val == '' then
-        error('drawROC specified without validation data?')
-      elseif opts.valSize ~= -1 then
-        error('sorry, drawROC can only be used with valSize == -1')
-      end
-    end
-
-    if not(opts.resume) or opts.resume == '' then
-      if paths.dir(self.processorOpts.drawROC) ~= nil then
-        local answer
-        repeat
-          print('Warning: drawROC directory exists! Continue (y/n)?')
-          answer=io.read()
-        until answer=="y" or answer=="n"
-        if answer == "n" then
-          error('drawROC directory exists! Aborting.')
-        end
-      else
-        paths.mkdir(self.processorOpts.drawROC)
-      end
-      -- make sure all files exist
-      print('Preparing drawROC directory.')
-      self.processorOpts.drawROCDir = self.processorOpts.drawROC .. '/res/'
-      os.execute('cat /file1/caltech10x/val/dirs.txt | awk \'{print "' .. self.processorOpts.drawROCDir .. '"$0}\' | xargs mkdir -p')
-      os.execute('cat /file1/caltech10x/test5/dirs.txt | awk \'{print "' .. self.processorOpts.drawROCDir .. '"$0}\' | xargs mkdir -p')
-    end
-
-    local matio = require 'matio'
-    matio.use_lua_strings = true
-    local boxes = {}
-    for _, path in ipairs(self.processorOpts.boxes:split(';')) do
-      boxes[#boxes+1] = matio.load(path)
-    end
-    self.boxes = {}
-    for i=1,#boxes do
-      for j=1,#boxes[i].name_pos do
-        self.boxes[boxes[i].name_pos[j]] = boxes[i].box_pos[j]
-      end
-      for j=1,#boxes[i].name_neg do
-        self.boxes[boxes[i].name_neg[j]] = boxes[i].box_neg[j]
-      end
-    end
+    self:initDrawROC()
   end
 
   if opts.logdir and opts.epochs then
@@ -105,6 +58,66 @@ function M:__init(model, processorOpts)
         gnuplot.grid(true)
         self.valROC = torch.Tensor(opts.epochs)
       end
+    end
+  end
+end
+
+function M:initDrawROC()
+  if string.sub(self.processorOpts.drawROC, 1, 1) ~= '/' then
+      self.processorOpts.drawROC = paths.concat(paths.cwd(), self.processorOpts.drawROC)
+  end
+  if opts.phase == 'test' then
+    if opts.epochSize ~= -1 then
+      error('sorry, drawROC can only be used with epochSize == -1')
+    end
+  else -- val
+    if opts.val == '' then
+      error('drawROC specified without validation data?')
+    elseif opts.valSize ~= -1 then
+      error('sorry, drawROC can only be used with valSize == -1')
+    end
+  end
+
+  if not(opts.resume) or opts.resume == '' then
+    if paths.dir(self.processorOpts.drawROC) ~= nil then
+      local answer
+      repeat
+        print('Warning: drawROC directory exists! Continue (y/n)?')
+        answer=io.read()
+      until answer=="y" or answer=="n"
+      if answer == "n" then
+        error('drawROC directory exists! Aborting.')
+      end
+    else
+      paths.mkdir(self.processorOpts.drawROC)
+    end
+    -- make sure all files exist
+    print('Preparing drawROC directory.')
+    self.processorOpts.drawROCDir = self.processorOpts.drawROC .. '/res/'
+    os.execute('cat /file1/caltech10x/val/dirs.txt | awk \'{print "' .. self.processorOpts.drawROCDir .. '"$0}\' | xargs mkdir -p')
+    os.execute('cat /file1/caltech10x/test5/dirs.txt | awk \'{print "' .. self.processorOpts.drawROCDir .. '"$0}\' | xargs mkdir -p')
+  end
+
+  self:prepareBoxes()
+end
+
+function M:prepareBoxes()
+  if self.processorOpts.boxes == '' then
+    error('Please specify boxes for drawROC. Example: /file1/caltech10x/test5/box.mat')
+  end
+  local matio = require 'matio'
+  matio.use_lua_strings = true
+  local boxes = {}
+  for _, path in ipairs(self.processorOpts.boxes:split(';')) do
+    boxes[#boxes+1] = matio.load(path)
+  end
+  self.boxes = {}
+  for i=1,#boxes do
+    for j=1,#boxes[i].name_pos do
+      self.boxes[boxes[i].name_pos[j]] = boxes[i].box_pos[j]
+    end
+    for j=1,#boxes[i].name_neg do
+      self.boxes[boxes[i].name_neg[j]] = boxes[i].box_neg[j]
     end
   end
 end
@@ -167,18 +180,23 @@ function M:getStats()
     print("Preparing data for drawing ROC...")
     -- remove duplicate boxes
     local total = 0
-    for file, attr in dirtree(self.processorOpts.drawROCDir) do
+    for _, attr in dirtree(self.processorOpts.drawROCDir) do
       if attr.mode == 'file' and attr.size > 0 then
         total = total + 1
       end
     end
     local count = 0
-    for file, attr in dirtree(self.processorOpts.drawROCDir) do
+    for filename, attr in dirtree(self.processorOpts.drawROCDir) do
       if attr.mode == 'file' and attr.size > 0 then
-        os.execute("gawk -i inplace '!a[$0]++' " .. file)
+        os.execute("gawk -i inplace '!a[$0]++' " .. filename)
         count = count + 1
         xlua.progress(count, total)
       end
+    end
+
+    -- do nms
+    if not self.processorOpts.nonms then
+      nmsCaltech(self.processorOpts.drawROCDir)
     end
 
     -- remove cache files
@@ -264,8 +282,8 @@ function M:drawROC(pathNames, values)
       local file, err = io.open(filename, 'a')
       if not(file) then error(err) end
 
-      local boxes = self.boxes[paths.basename(path)]
-      file:write(boxes[1]-1, ' ',  boxes[2]-1, ' ', boxes[3]-boxes[1]+1, ' ', boxes[4]-boxes[2]+1, ' ', values[i], '\n')
+      local box = self.boxes[paths.basename(path)]
+      file:write(box[1]-1, ' ',  box[2]-1, ' ', box[3]-box[1]+1, ' ', box[4]-box[2]+1, ' ', values[i], '\n')
       file:close()
     end
   end

@@ -54,7 +54,7 @@ end
 local softCriterion = teacher.processor:getStudentCriterion()
 
 local function train(pathNames)
-  if softCriterion.sizeAverage ~= false or student.processor.criterion.sizeAverage ~= false then
+  if softCriterion.sizeAverage ~= false or (student.processor.criterion and student.processor.criterion.sizeAverage ~= false) then
     error('this function assumes criterion.sizeAverage == false because we divide through by batchCount.')
   end
 
@@ -134,16 +134,20 @@ local function train(pathNames)
 
   -- Hard labels
   local labels = student.processor:getLabels(pathNames, studentOutputs)
-  local hardLoss = student.processor.criterion:forward(studentOutputs, labels) * opts.lambda
-  local hardGradOutputs = student.processor.criterion:backward(studentOutputs, labels)
-  if type(hardGradOutputs) == 'table' then
-    for i=1,#hardGradOutputs do
-      hardGradOutputs[i] = hardGradOutputs[i] * opts.lambda / opts.batchCount
+
+  local hardLoss = 0
+  if student.processor.criterion then
+    hardLoss = student.processor.criterion:forward(studentOutputs, labels) * opts.lambda
+    local hardGradOutputs = student.processor.criterion:backward(studentOutputs, labels)
+    if type(hardGradOutputs) == 'table' then
+      for i=1,#hardGradOutputs do
+        hardGradOutputs[i] = hardGradOutputs[i] * opts.lambda / opts.batchCount
+      end
+    else
+      hardGradOutputs = hardGradOutputs * opts.lambda / opts.batchCount
     end
-  else
-    hardGradOutputs = hardGradOutputs * opts.lambda / opts.batchCount
+    student.processor:backward(studentInputs, hardGradOutputs)
   end
-  student.processor:backward(studentInputs, hardGradOutputs)
 
   student.processor:updateStats(pathNames, studentOutputs, labels)
   return softLoss + hardLoss, #pathNames

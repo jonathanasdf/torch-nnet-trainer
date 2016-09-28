@@ -270,7 +270,12 @@ function M:train(trainFn, valFn)
         local cachename = opts.backupdir .. opts.basename .. '.cached'
         self:save(cachename)
         if opts.keepCaches then
-          os.execute('cp ' .. cachename .. ' ' .. opts.cachedir .. 'epoch' .. epoch .. '.t7')
+          local cachefile = opts.cachedir .. 'epoch' .. epoch .. '.t7'
+          print('Saving cache ' .. cachefile)
+          os.execute('cp ' .. cachename .. ' ' .. cachefile)
+          if not paths.filep(cachefile) then
+            print('ERROR COPYING FILE TO CACHE?')
+          end
         end
 
         local pathNames = trainLoader:sample(opts.batchSize)

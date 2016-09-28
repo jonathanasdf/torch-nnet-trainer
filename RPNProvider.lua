@@ -4,6 +4,8 @@ local M = torch.class('RPNProvider', 'Processor')
 function M:__init(model, processorOpts)
   self.cmd:option('-boxesPerImage', 100, 'Number of boxes output per image.')
   Processor.__init(self, model, processorOpts)
+
+  self.gt = torch.load('/data/rpn/datasets/caltech/gt.t7')
 end
 
 -- Only called by TrainStudentModel.lua
@@ -27,13 +29,10 @@ function M:getLabels(pathNames, outputs)
   local n = self.processorOpts.boxesPerImage
   local boxes = torch.CudaTensor(#pathNames, n, 4)
   local scores = torch.CudaTensor(#pathNames, n)
-  local matio = require 'matio'
-  matio.use_lua_strings = true
   for i=1,#pathNames do
-    local folder = paths.dirname(paths.dirname(pathNames[i]))
-    local d = matio.load(folder .. '/gt/' .. paths.basename(pathNames[i]) .. '.mat')
-    boxes[i] = d.bf_boxes
-    scores[i] = d.bf_scores
+    local name = paths.basename(pathNames[i])
+    boxes[i] = self.gt.boxes[name];
+    scores[i] = self.gt.scores[name];
   end
   return {boxes, scores:view(-1)}
 end
