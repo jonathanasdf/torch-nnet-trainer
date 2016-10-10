@@ -13,9 +13,12 @@ function M:__init(model, processorOpts)
   self.data = torch.load('/file1/caltechrpn/ssd.t7')
 end
 
+function M:getLoss(outputs, labels)
+  return 0, 0
+end
+
 -- Only called by TrainStudentModel.lua
-function M:getStudentCriterion()
-  local softCriterion = Processor.getStudentCriterion(self)
+function M:getStudentLoss(outputs, labels)
   local smoothL1Criterion = nn.SmoothL1Criterion()
   smoothL1Criterion.sizeAverage = false
   local criterion = nn.ParallelCriterion()

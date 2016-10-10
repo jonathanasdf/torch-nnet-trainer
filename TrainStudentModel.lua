@@ -1,8 +1,6 @@
 package.path = package.path .. ';/home/jshen/scripts/?.lua'
 
 require 'Model'
-require 'nn.MSECovCriterion'
-require 'nn.SoftCrossEntropyCriterion'
 require 'Utils'
 
 local cmd = torch.CmdLine()
@@ -51,13 +49,7 @@ if opts.copyTeacherLayers then
   student.params, student.gradParams = student:getParameters()
 end
 
-local softCriterion = teacher.processor:getStudentCriterion()
-
 local function train(pathNames)
-  if softCriterion.sizeAverage ~= false or (student.processor.criterion and student.processor.criterion.sizeAverage ~= false) then
-    error('this function assumes criterion.sizeAverage == false because we divide through by batchCount.')
-  end
-
   local studentInputs, augmentations = student.processor:loadAndPreprocessInputs(pathNames)
 
   local teacherInputs = studentInputs
@@ -118,9 +110,8 @@ local function train(pathNames)
     softCriterion.invcov = cov
   end
 
-  local softLoss = softCriterion:forward(studentLayerOutputs, teacherLayerOutputs)
-  local softGradOutputs = softCriterion:backward(studentLayerOutputs, teacherLayerOutputs)
-  if opts.dropoutBayes > 1 and not(opts.useCOV) then
+  local loss, softGradOutputs = teacher.processor:getStudentLoss(studentLayerOutputs, teacherLayerOutputs)
+  if opts.dropoutBayes > 1 and not opts.useCOV then
     softGradOutputs = torch.cdiv(softGradOutputs, variance)
   end
   if type(softGradOutputs) == 'table' then
@@ -135,10 +126,9 @@ local function train(pathNames)
   -- Hard labels
   local labels = student.processor:getLabels(pathNames, studentOutputs)
 
-  local hardLoss = 0
-  if student.processor.criterion then
-    hardLoss = student.processor.criterion:forward(studentOutputs, labels) * opts.lambda
-    local hardGradOutputs = student.processor.criterion:backward(studentOutputs, labels)
+  if student.processor.criterion and opts.lambda ~= 0 then
+    local hardLoss, hardGradOutputs = student.processor:getLoss(studentOutputs, labels)
+    loss = loss + hardLoss * opts.lambda
     if type(hardGradOutputs) == 'table' then
       for i=1,#hardGradOutputs do
         hardGradOutputs[i] = hardGradOutputs[i] * opts.lambda / opts.batchCount
@@ -150,7 +140,7 @@ local function train(pathNames)
   end
 
   student.processor:updateStats(pathNames, studentOutputs, labels)
-  return softLoss + hardLoss, #pathNames
+  return loss, #pathNames
 end
 
 student:train(train)

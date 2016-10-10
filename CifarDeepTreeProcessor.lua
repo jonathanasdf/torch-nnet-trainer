@@ -23,15 +23,11 @@ function M:updateStats(pathNames, outputs, labels)
   self.stats:batchAdd(avg, labels)
 end
 
--- Performs a single forward and backward pass through the model
-function M:train(pathNames)
+function M:getLoss(outputs, labels)
   if self.criterion.sizeAverage ~= false then
     error('this function assumes criterion.sizeAverage == false because we divide through by batchCount.')
   end
 
-  local inputs = self:loadAndPreprocessInputs(pathNames)
-  local outputs = self:forward(pathNames, inputs)
-  local labels = self:getLabels(pathNames, outputs)
   local loss = 0
   local gradOutputs = {}
   for i=1,#outputs do
@@ -41,26 +37,8 @@ function M:train(pathNames)
       gradOutputs[i][1][j] = self.criterion:backward(outputs[i][1][j], labels[j]) * outputs[i][2][j][1] / opts.batchCount
     end
   end
-  self:backward(inputs, gradOutputs)
 
-  self:updateStats(pathNames, outputs, labels)
-  return loss, #pathNames
-end
-
--- return {aggregatedLoss, #instancesTested}
-function M:test(pathNames)
-  local inputs = self:loadAndPreprocessInputs(pathNames)
-  local outputs = self:forward(pathNames, inputs, true)
-  local labels = self:getLabels(pathNames, outputs)
-  local loss = 0
-  for i=1,#outputs do
-    for j=1,#pathNames do
-      loss = loss + self.criterion:forward(outputs[i][1][j], labels[j]) * outputs[i][2][j][1] / opts.batchCount
-    end
-  end
-
-  self:updateStats(pathNames, outputs, labels)
-  return loss, #pathNames
+  return loss, gradOutputs
 end
 
 return M

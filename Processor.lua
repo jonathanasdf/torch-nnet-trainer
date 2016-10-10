@@ -12,24 +12,6 @@ function M:__init(model, processorOpts)
   end
 end
 
--- Only called by TrainStudentModel.lua
-function M:getStudentCriterion()
-  local softCriterion
-  if opts.useCOV then
-    if opts.dropoutBayes == 1 then
-      error('useCOV requires dropoutBayes. Please set useMSE if not using dropout.')
-    end
-    softCriterion = nn.MSECovCriterion(false)
-  elseif opts.useMSE then
-    softCriterion = nn.MSECriterion(false)
-  else
-    -- TODO: SoftCrossEntropyCriterion needs to be logified
-    -- softCriterion = nn.SoftCrossEntropyCriterion(opts.T, false)
-    softCriterion = nn.MSECriterion(false)
-  end
-  return softCriterion:cuda()
-end
-
 -- nil means anything is fine. {} means no augmentations.
 local function checkAugmentations(a, b)
   if a == nil or b == nil then
@@ -102,6 +84,37 @@ function M:backward(inputs, gradOutputs, gradLayer)
   return self.model:backward(inputs, gradOutputs, gradLayer)
 end
 
+function M:getLoss(outputs, labels)
+  if not(self.criterion) then
+    error('processor criterion is not defined. Either define a criterion or a custom getLoss function.')
+  end
+  if self.criterion.sizeAverage ~= false then
+    error('this function assumes criterion.sizeAverage == false because we divide through by batchCount.')
+  end
+
+  local loss = self.criterion:forward(outputs, labels)
+  local gradInputs = self.criterion:backward(outputs, labels)
+  return loss, gradInputs
+end
+
+-- Only called by TrainStudentModel.lua
+function M:getStudentLoss(outputs, labels)
+  local softCriterion
+  if opts.useCOV then
+    if opts.dropoutBayes == 1 then
+      error('useCOV requires dropoutBayes. Please set useMSE if not using dropout.')
+    end
+    softCriterion = nn.MSECovCriterion(false)
+  elseif opts.useMSE then
+    softCriterion = nn.MSECriterion(false)
+  else
+    -- TODO: SoftCrossEntropyCriterion needs to be logified
+    -- softCriterion = nn.SoftCrossEntropyCriterion(opts.T, false)
+    softCriterion = nn.MSECriterion(false)
+  end
+  return softCriterion:cuda()
+end
+
 -- Called before each validation/test run
 function M:resetStats() end
 -- Calculate and update stats
@@ -111,18 +124,10 @@ function M:getStats() end
 
 -- Performs a single forward and backward pass through the model
 function M:train(pathNames)
-  if not(self.criterion) then
-    error('processor criterion is not defined. Either define a criterion or a custom train function.')
-  end
-  if self.criterion.sizeAverage ~= false then
-    error('this function assumes criterion.sizeAverage == false because we divide through by batchCount.')
-  end
-
   local inputs = self:loadAndPreprocessInputs(pathNames)
   local outputs = self:forward(pathNames, inputs)
   local labels = self:getLabels(pathNames, outputs)
-  local loss = self.criterion:forward(outputs, labels)
-  local gradOutputs = self.criterion:backward(outputs, labels)
+  local loss, gradOutputs = self:getLoss(outputs, labels)
   if type(gradOutputs) == 'table' then
     for i=1,#gradOutputs do
       gradOutputs[i] = gradOutputs[i] / opts.batchCount
@@ -141,7 +146,7 @@ function M:test(pathNames)
   local inputs = self:loadAndPreprocessInputs(pathNames)
   local outputs = self:forward(pathNames, inputs, true)
   local labels = self:getLabels(pathNames, outputs)
-  local loss = self.criterion and self.criterion:forward(outputs, labels) or 0
+  local loss, _ = self:getLoss(outputs, labels)
 
   self:updateStats(pathNames, outputs, labels)
   return loss, #pathNames
