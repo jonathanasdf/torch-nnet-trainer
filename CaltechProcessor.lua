@@ -17,25 +17,25 @@ function M:__init(model, processorOpts)
   self.cmd:option('-nonms', false, 'dont apply nms to boxes for drawROC')
   Processor.__init(self, model, processorOpts)
 
-  if self.processorOpts.inceptionPreprocessing then
+  if self.inceptionPreprocessing then
     -- no mean normalization
-  elseif self.processorOpts.caffePreprocessing then
-    self.processorOpts.meanPixel = torch.Tensor{103.939, 116.779, 123.68}:view(3, 1, 1)
+  elseif self.caffePreprocessing then
+    self.meanPixel = torch.Tensor{103.939, 116.779, 123.68}:view(3, 1, 1)
   else
-    self.processorOpts.meanPixel = torch.Tensor{0.485, 0.456, 0.406}:view(3, 1, 1)
-    self.processorOpts.std = torch.Tensor{0.229, 0.224, 0.225}:view(3, 1, 1)
+    self.meanPixel = torch.Tensor{0.485, 0.456, 0.406}:view(3, 1, 1)
+    self.std = torch.Tensor{0.229, 0.224, 0.225}:view(3, 1, 1)
   end
 
-  local w = self.processorOpts.negativesWeight
+  local w = self.negativesWeight
   local weights = torch.Tensor{w/(1+w), 1/(1+w)} * 2
   self.criterion = nn.TrueNLLCriterion(weights, false):cuda()
 
-  if self.processorOpts.drawROC ~= '' then
-    if self.processorOpts.outputBoxes == '' then
-      self.processorOpts.outputBoxes = self.processorOpts.drawROC .. '/res/'
+  if self.drawROC ~= '' then
+    if self.outputBoxes == '' then
+      self.outputBoxes = self.drawROC .. '/res/'
     end
   end
-  if self.processorOpts.outputBoxes ~= '' then
+  if self.outputBoxes ~= '' then
     self:initDrawROC()
   end
 
@@ -57,7 +57,7 @@ function M:__init(model, processorOpts)
       self.valNegAcc = torch.Tensor(opts.epochs)
       self.valAcc = torch.Tensor(opts.epochs)
 
-      if self.processorOpts.drawROC ~= '' then
+      if self.drawROC ~= '' then
         self.valROCGraph = gnuplot.pngfigure(opts.logdir .. 'val-logavgmiss.png')
         gnuplot.xlabel('epoch')
         gnuplot.ylabel('log-average miss rate')
@@ -69,27 +69,27 @@ function M:__init(model, processorOpts)
 end
 
 function M:initDrawROC()
-  if string.sub(self.processorOpts.outputBoxes, 1, 1) ~= '/' then
-      self.processorOpts.outputBoxes = paths.concat(paths.cwd(), self.processorOpts.outputBoxes)
+  if string.sub(self.outputBoxes, 1, 1) ~= '/' then
+      self.outputBoxes = paths.concat(paths.cwd(), self.outputBoxes)
   end
-  if string.sub(self.processorOpts.outputBoxes, -1) ~= '/' then
-      self.processorOpts.outputBoxes = self.processorOpts.outputBoxes .. '/'
+  if string.sub(self.outputBoxes, -1) ~= '/' then
+      self.outputBoxes = self.outputBoxes .. '/'
   end
-  if self.processorOpts.drawROC ~= '' and string.sub(self.processorOpts.drawROC, 1, 1) ~= '/' then
-      self.processorOpts.drawROC = paths.concat(paths.cwd(), self.processorOpts.drawROC)
+  if self.drawROC ~= '' and string.sub(self.drawROC, 1, 1) ~= '/' then
+      self.drawROC = paths.concat(paths.cwd(), self.drawROC)
   end
 
   opts.drawROCInputs = {}
   local inputs
   if opts.phase == 'test' then
-    if self.processorOpts.drawROC ~= '' and opts.epochSize ~= -1 then
+    if self.drawROC ~= '' and opts.epochSize ~= -1 then
       error('sorry, drawROC can only be used with epochSize == -1')
     end
     inputs = opts.input
   else -- val
     if opts.val == '' then
       error('drawROC specified without validation data?')
-    elseif self.processorOpts.drawROC ~= '' and opts.valSize ~= -1 then
+    elseif self.drawROC ~= '' and opts.valSize ~= -1 then
       error('sorry, drawROC can only be used with valSize == -1')
     end
     inputs = opts.val
@@ -101,7 +101,7 @@ function M:initDrawROC()
   end
 
   if not(opts.resume) or opts.resume == '' then
-    if paths.dir(self.processorOpts.outputBoxes) ~= nil or (self.processorOpts.drawROC ~= '' and paths.dir(self.processorOpts.drawROC) ~= nil) then
+    if paths.dir(self.outputBoxes) ~= nil or (self.drawROC ~= '' and paths.dir(self.drawROC) ~= nil) then
       local answer
       repeat
         print('Warning: drawROC directory exists! Continue (y/n)?')
@@ -111,25 +111,25 @@ function M:initDrawROC()
         error('drawROC directory exists! Aborting.')
       end
     else
-      paths.mkdir(self.processorOpts.outputBoxes)
-      if self.processorOpts.drawROC ~= '' then
-        paths.mkdir(self.processorOpts.drawROC)
+      paths.mkdir(self.outputBoxes)
+      if self.drawROC ~= '' then
+        paths.mkdir(self.drawROC)
       end
     end
 
     -- make sure paths exist
     print('Preparing boxes directory.')
     if opts.drawROCInputs['train'] then
-      if self.processorOpts.drawROC ~= '' then
+      if self.drawROC ~= '' then
         error('Using train with drawROC is not supported.')
       end
-      os.execute('cat /file1/caltech10x/train/dirs.txt | awk \'{print "' .. self.processorOpts.outputBoxes .. '"$0}\' | xargs mkdir -p')
+      os.execute('cat /file1/caltech10x/train/dirs.txt | awk \'{print "' .. self.outputBoxes .. '"$0}\' | xargs mkdir -p')
     end
     if opts.drawROCInputs['val'] then
-      os.execute('cat /file1/caltech10x/val/dirs.txt | awk \'{print "' .. self.processorOpts.outputBoxes .. '"$0}\' | xargs mkdir -p')
+      os.execute('cat /file1/caltech10x/val/dirs.txt | awk \'{print "' .. self.outputBoxes .. '"$0}\' | xargs mkdir -p')
     end
     if opts.drawROCInputs['test'] then
-      os.execute('cat /file1/caltech10x/test5/dirs.txt | awk \'{print "' .. self.processorOpts.outputBoxes .. '"$0}\' | xargs mkdir -p')
+      os.execute('cat /file1/caltech10x/test5/dirs.txt | awk \'{print "' .. self.outputBoxes .. '"$0}\' | xargs mkdir -p')
     end
   end
 
@@ -137,13 +137,13 @@ function M:initDrawROC()
 end
 
 function M:prepareBoxes()
-  if self.processorOpts.boxes == '' then
+  if self.boxes == '' then
     error('Please specify boxes file. Example: /file1/caltech10x/test5/box.mat')
   end
   local matio = require 'matio'
   matio.use_lua_strings = true
   local boxes = {}
-  for _, path in ipairs(self.processorOpts.boxes:split(';')) do
+  for _, path in ipairs(self.boxes:split(';')) do
     boxes[#boxes+1] = matio.load(path)
   end
   self.boxes = {}
@@ -168,23 +168,23 @@ function M:preprocess(path, augmentations)
     end
   else
     if opts.phase == 'train' then
-      if self.processorOpts.flip ~= 0 then
-        augs[#augs+1] = Transforms.HorizontalFlip(self.processorOpts.flip)
+      if self.flip ~= 0 then
+        augs[#augs+1] = Transforms.HorizontalFlip(self.flip)
       end
     end
   end
 
   local img = image.load(path, 3)
-  local sz = self.processorOpts.imageSize
+  local sz = self.imageSize
   img = Transforms.Scale(sz, sz)[2](img)
   img = Transforms.Apply(augs, img)
 
-  if self.processorOpts.inceptionPreprocessing then
+  if self.inceptionPreprocessing then
     img = (img * 255 - 128) / 128
-  elseif self.processorOpts.caffePreprocessing then
-    img = (convertRGBBGR(img) * 255):csub(self.processorOpts.meanPixel:expandAs(img))
+  elseif self.caffePreprocessing then
+    img = (convertRGBBGR(img) * 255):csub(self.meanPixel:expandAs(img))
   else
-    img = img:csub(self.processorOpts.meanPixel:expandAs(img)):cdiv(self.processorOpts.std:expandAs(img))
+    img = img:csub(self.meanPixel:expandAs(img)):cdiv(self.std:expandAs(img))
   end
   return img:cuda(), augs
 end
@@ -199,15 +199,15 @@ end
 
 function M:resetStats()
   self.stats = optim.ConfusionMatrix({'no person', 'person'})
-  if self.processorOpts.drawROC ~= '' then
+  if self.drawROC ~= '' then
     if opts.drawROCInputs['val'] then
-      os.execute('cat /file1/caltech10x/val/files.txt | awk \'{print "' .. self.processorOpts.outputBoxes .. '"$0}\' | xargs truncate -s 0')
+      os.execute('cat /file1/caltech10x/val/files.txt | awk \'{print "' .. self.outputBoxes .. '"$0}\' | xargs truncate -s 0')
     end
     if opts.drawROCInputs['test'] then
-      os.execute('cat /file1/caltech10x/test5/files.txt | awk \'{print "' .. self.processorOpts.outputBoxes .. '"$0}\' | xargs truncate -s 0')
+      os.execute('cat /file1/caltech10x/test5/files.txt | awk \'{print "' .. self.outputBoxes .. '"$0}\' | xargs truncate -s 0')
     end
-  elseif self.processorOpts.outputBoxes ~= '' then
-    os.execute('find ' .. self.processorOpts.outputBoxes .. ' -type f -exec rm {} \\;')
+  elseif self.outputBoxes ~= '' then
+    os.execute('find ' .. self.outputBoxes .. ' -type f -exec rm {} \\;')
   end
 end
 
@@ -218,17 +218,17 @@ end
 function M:getStats()
   local ROC
   if opts.phase ~= 'train' then
-    if self.processorOpts.outputBoxes ~= '' then
+    if self.outputBoxes ~= '' then
       print("Printing boxes...")
       -- remove duplicate boxes
       local total = 0
-      for _, attr in dirtree(self.processorOpts.outputBoxes) do
+      for _, attr in dirtree(self.outputBoxes) do
         if attr.mode == 'file' and attr.size > 0 then
           total = total + 1
         end
       end
       local count = 0
-      for filename, attr in dirtree(self.processorOpts.outputBoxes) do
+      for filename, attr in dirtree(self.outputBoxes) do
         if attr.mode == 'file' and attr.size > 0 then
           os.execute("gawk -i inplace '!a[$0]++' " .. filename)
           count = count + 1
@@ -237,15 +237,15 @@ function M:getStats()
       end
 
       -- do nms
-      if not self.processorOpts.nonms then
-        nmsCaltech(self.processorOpts.outputBoxes)
+      if not self.nonms then
+        nmsCaltech(self.outputBoxes)
       end
     end
 
-    if self.processorOpts.drawROC ~= '' then
+    if self.drawROC ~= '' then
       -- remove cache files
-      os.execute('rm -f ' .. self.processorOpts.drawROC .. '/eval/dt*.mat')
-      os.execute('rm -f ' .. self.processorOpts.drawROC .. '/eval/ev*.mat')
+      os.execute('rm -f ' .. self.drawROC .. '/eval/dt*.mat')
+      os.execute('rm -f ' .. self.drawROC .. '/eval/ev*.mat')
 
       local dataName
       for k,_ in pairs(opts.drawROCInputs) do
@@ -258,13 +258,13 @@ function M:getStats()
       dataName = dataName .. '}'
       local cmd
       if opts.phase == 'test' then
-        cmd = "cd /file1/caltech; dbEval('" .. self.processorOpts.drawROC .. "', " .. dataName .. ", '" .. self.processorOpts.name .. "')"
+        cmd = "cd /file1/caltech; dbEval('" .. self.drawROC .. "', " .. dataName .. ", '" .. self.name .. "')"
       elseif opts.phase == 'val' then
-        cmd = "cd /file1/caltech; dbEvalVal('" .. self.processorOpts.drawROC .. "', " .. dataName .. ")"
+        cmd = "cd /file1/caltech; dbEvalVal('" .. self.drawROC .. "', " .. dataName .. ")"
       end
       print("Running MATLAB script...")
       print(runMatlab(cmd))
-      local result = readAll(self.processorOpts.drawROC .. '/eval/RocReasonable.txt')
+      local result = readAll(self.drawROC .. '/eval/RocReasonable.txt')
       print(result)
       ROC = string.sub(result, 8)
     end
@@ -305,12 +305,12 @@ function M:getStats()
 end
 
 function M:outputBoxes(pathNames, values)
-  if self.processorOpts.outputBoxes ~= '' then
+  if self.outputBoxes ~= '' then
     for i=1,#pathNames do
       local path = pathNames[i]
       local set, video, id = path:match("set(.-)_V(.-)_I(.-)_")
 
-      local filename = self.processorOpts.outputBoxes .. 'set' .. set .. '/V' .. video .. '/I' .. id .. '.txt'
+      local filename = self.outputBoxes .. 'set' .. set .. '/V' .. video .. '/I' .. id .. '.txt'
       local file, err = io.open(filename, 'a')
       if not(file) then error(err) end
 

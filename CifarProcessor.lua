@@ -10,8 +10,8 @@ function M:__init(model, processorOpts)
   Processor.__init(self, model, processorOpts)
 
   local data = torch.load('/file1/cifar10/data.t7')
-  self.processorOpts.input = data.data:float()
-  self.processorOpts.label = data.labels:cuda()
+  self.data = data.data:float()
+  self.label = data.labels:cuda()
 
   self.criterion = nn.CrossEntropyCriterion(nil, false):cuda()
 
@@ -36,22 +36,22 @@ function M:preprocess(path, augmentations)
     end
   else
     if opts.phase == 'train' then
-      if self.processorOpts.randomCrop > 0 then
+      if self.randomCrop > 0 then
         augs[#augs+1] = Transforms.RandomCrop(
-            self.processorOpts.imageSize, self.processorOpts.randomCrop, 'reflection')
+            self.imageSize, self.randomCrop, 'reflection')
       end
-      if self.processorOpts.minCropPercent < 1 then
-        augs[#augs+1] = Transforms.RandomCropPercent(self.processorOpts.minCropPercent)
+      if self.minCropPercent < 1 then
+        augs[#augs+1] = Transforms.RandomCropPercent(self.minCropPercent)
       end
-      if self.processorOpts.flip > 0 then
-        augs[#augs+1] = Transforms.HorizontalFlip(self.processorOpts.flip)
+      if self.flip > 0 then
+        augs[#augs+1] = Transforms.HorizontalFlip(self.flip)
       end
     end
   end
 
-  local img = self.processorOpts.input[tonumber(path)]
+  local img = self.data[tonumber(path)]
   img = Transforms.Apply(augs, img)
-  local sz = self.processorOpts.imageSize
+  local sz = self.imageSize
   img = Transforms.Scale(sz, sz)[2](img)
   return img:cuda(), augs
 end
@@ -59,7 +59,7 @@ end
 function M:getLabels(pathNames, outputs)
   local labels = torch.CudaTensor(#pathNames)
   for i=1,#pathNames do
-    labels[i] = self.processorOpts.label[tonumber(pathNames[i])]
+    labels[i] = self.label[tonumber(pathNames[i])]
   end
   return labels
 end

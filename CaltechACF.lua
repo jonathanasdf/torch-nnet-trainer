@@ -19,15 +19,15 @@ function M:preprocess(path, augmentations)
     end
   else
     if opts.phase == 'train' then
-      if self.processorOpts.flip ~= 0 then
-        augs[#augs+1] = Transforms.HorizontalFlip(self.processorOpts.flip)
+      if self.flip ~= 0 then
+        augs[#augs+1] = Transforms.HorizontalFlip(self.flip)
       end
     end
   end
   local dir = paths.dirname(paths.dirname(path)) .. '/acft7/'
   local name = paths.basename(path, '.png')
   local imgs = torch.load(dir .. name .. '.t7'):decompress()
-  local sz = self.processorOpts.imageSize
+  local sz = self.imageSize
   imgs = Transforms.Scale(sz, sz)[2](imgs)
   imgs = Transforms.Apply(augs, imgs)
   return imgs:cuda(), augs

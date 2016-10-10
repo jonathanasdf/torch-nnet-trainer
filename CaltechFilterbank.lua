@@ -20,14 +20,14 @@ function M:preprocess(path, augmentations)
     end
   else
     if opts.phase == 'train' then
-      if self.processorOpts.flip ~= 0 then
-        augs[#augs+1] = Transforms.HorizontalFlip(self.processorOpts.flip)
+      if self.flip ~= 0 then
+        augs[#augs+1] = Transforms.HorizontalFlip(self.flip)
       end
     end
   end
 
   local img = image.load(path, 3)
-  local sz = self.processorOpts.imageSize
+  local sz = self.imageSize
   img = Transforms.Scale(sz, sz)[2](img)
   img = Transforms.Apply(augs, img)
   img = filterbank(img)

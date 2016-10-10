@@ -7,7 +7,9 @@ local M = torch.class('Processor')
 M.cmd = torch.CmdLine()
 function M:__init(model, processorOpts)
   self.model = model
-  self.processorOpts = self.cmd:parse(processorOpts:split(' ='))
+  for k,v in pairs(self.cmd:parse(processorOpts:split(' ='))) do
+    self[k] = v
+  end
 end
 
 -- Only called by TrainStudentModel.lua

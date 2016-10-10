@@ -4,10 +4,10 @@ local M = torch.class('CaltechRegionProposalEvaluator', 'CaltechProcessor')
 function M:__init(model, processorOpts)
   CaltechProcessor.__init(self, model, processorOpts)
 
-  if self.processorOpts.outputBoxes == '' then
+  if self.outputBoxes == '' then
     error('CaltechRegionProposalEvaluator requires outputBoxes.')
   end
-  if not self.processorOpts.nonms then
+  if not self.nonms then
     print('WARNING: you might want to set nonms.')
   end
 end

@@ -2,4 +2,3 @@ change Transform to return parameters not functions so it can be multithreaded
 use TorchNet for data loading
 Count flops
 Allow for customization of sgd strategy
-Add hard negative mining to TrainSVM.lua

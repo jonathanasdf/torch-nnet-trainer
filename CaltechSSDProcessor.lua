@@ -3,10 +3,19 @@ local CaltechProcessor = require 'CaltechProcessor'
 local M = torch.class('CaltechFullImageProcessor', 'CaltechProcessor')
 
 function M:__init(model, processorOpts)
-  self.cmd:option('-boxesPerImage', 100, 'Number of boxes output per image.')
   self.cmd:option('-criterionWeights', '', 'semicolon separated weights for pos/neg')
 
   CaltechProcessor.__init(self, model, processorOpts)
+
+  local boxesFile = '/file1/caltechrpn/boxes.txt'
+  self.processorOpts.nBoxes = 0
+  for _ in io.lines(boxesFile) do
+    self.processorOpts.nBoxes = self.processorOpts.nBoxes + 1
+  end
+  self.boxes = torch.Tensor(self.processorOpts.nBoxes, 4)
+  local df = torch.DiskFile(boxesFile, 'r')
+  df:readFloat(self.boxes:storage())
+  df:close()
 
   if self.processorOpts.criterionWeights and self.processorOpts.criterionWeights ~= '' then
     self.processorOpts.criterionWeights = torch.Tensor(self.processorOpts.criterionWeights:split(';'))
@@ -20,8 +29,8 @@ function M:__init(model, processorOpts)
   local smoothL1Criterion = nn.SmoothL1Criterion()
   smoothL1Criterion.sizeAverage = false
   self.criterion = nn.ParallelCriterion()
-    :add(smoothL1Criterion)
     :add(nn.CrossEntropyCriterion(self.processorOpts.criterionWeights, false))
+    :add(smoothL1Criterion)
     :cuda()
   self.criterion.sizeAverage = false
 end
@@ -41,30 +50,28 @@ function M:preprocess(path, augmentations)
   return img:cuda(), {}
 end
 
--- Assumes outputs is a table with {boxes, scores for Y/N classes}
--- Returned labels = {closest_box, overlap > 0.5}
+-- outputs = {scores, boxes}
+-- Returned labels = {highest iou > 0.5, offsets}
 local check_gt = requirePath('/data/rpn/datasets/check_gt.lua')
 function M:getLabels(pathNames, outputs)
   local boxes = outputs[1]
-  local n = self.processorOpts.boxesPerImage
-  local closest = torch.CudaTensor(#pathNames, n, 4)
-  local labels = torch.CudaTensor(#pathNames, n)
+  local n = self.processorOpts.nBoxes
+  local pos = torch.zeros(#pathNames, n):cuda()
+  local offsets = torch.zeros(#pathNames, n, 4):cuda()
   for i=1,#pathNames do
     closest[i], labels[i] = check_gt(paths.basename(pathNames[i]), boxes[i])
   end
-  -- labels is {0, 1} but in torch we need it to be 1-indexed
-  labels = labels + 1
-  return {closest, labels:view(-1)}
+  -- pos is {0, 1} but in torch we need it to be 1-indexed
+  pos = pos + 1
+  return {pos:view(-1), offsets}
 end
 
 function M:updateStats(pathNames, outputs, labels)
-  self.stats:batchAdd(outputs[2], labels[2])
+  self.stats:batchAdd(outputs[1], labels[1])
 end
 
--- values length is batchSize * boxesPerImage
 function M:outputBoxes(pathNames, values)
   if self.processorOpts.outputBoxes ~= '' then
-    local n = self.processorOpts.boxesPerImage;
     for i=1,#pathNames do
       local path = pathNames[i]
       local set, video, id = path:match("/set(.-)_V(.-)_I(.-)%.")
@@ -74,9 +81,8 @@ function M:outputBoxes(pathNames, values)
       if not(file) then error(err) end
 
       local boxes = self.model.output[1][i]
-      assert(boxes:size(1) == n)
-      assert(values:size(1) == #pathNames * n)
-      for j=1,n do
+      assert(values:size(1) == #pathNames * self.processorOpts.nBoxes)
+      for j=1,self.processorOpts.nBoxes do
         file:write(boxes[j][1]-1, ' ', boxes[j][2]-1, ' ', boxes[j][3]-boxes[j][1]+1, ' ', boxes[j][4]-boxes[j][2]+1, ' ', values[(i-1)*n+j], '\n')
       end
       file:close()
@@ -86,7 +92,7 @@ end
 
 function M:test(pathNames)
   local loss, total = Processor.test(self, pathNames)
-  self:outputBoxes(pathNames, self.model.output[2][{{}, 2}])
+  self:outputBoxes(pathNames, self.model.output)
   return loss, total
 end
 

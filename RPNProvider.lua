@@ -2,10 +2,15 @@ local Processor = require 'Processor'
 local M = torch.class('RPNProvider', 'Processor')
 
 function M:__init(model, processorOpts)
-  self.cmd:option('-boxesPerImage', 100, 'Number of boxes output per image.')
   Processor.__init(self, model, processorOpts)
 
-  self.gt = torch.load('/data/rpn/datasets/caltech/gt.t7')
+  local boxesFile = '/file1/caltechrpn/boxes.txt'
+  self.nBoxes = 0
+  for _ in io.lines(boxesFile) do
+    self.nBoxes = self.nBoxes + 1
+  end
+
+  self.data = torch.load('/file1/caltechrpn/ssd.t7')
 end
 
 -- Only called by TrainStudentModel.lua
@@ -14,10 +19,11 @@ function M:getStudentCriterion()
   local smoothL1Criterion = nn.SmoothL1Criterion()
   smoothL1Criterion.sizeAverage = false
   local criterion = nn.ParallelCriterion()
-    :add(smoothL1Criterion)
     :add(softCriterion)
+    :add(smoothL1Criterion)
+    :cuda()
   criterion.sizeAverage = false
-  return criterion:cuda()
+  return criterion
 end
 
 local t = torch.CudaTensor(1)
@@ -26,15 +32,20 @@ function M:preprocess(path, augmentations)
 end
 
 function M:getLabels(pathNames, outputs)
-  local n = self.processorOpts.boxesPerImage
-  local boxes = torch.CudaTensor(#pathNames, n, 4)
-  local scores = torch.CudaTensor(#pathNames, n)
+  local n = self.nBoxes
+  local scores = torch.zeros(#pathNames, n):cuda()
+  local offsets = torch.zeros(#pathNames, n, 4):cuda()
   for i=1,#pathNames do
-    local name = paths.basename(pathNames[i])
-    boxes[i] = self.gt.boxes[name];
-    scores[i] = self.gt.scores[name];
+    local name = paths.basename(pathNames[i], '.jpg')
+    local box = self.data[name]
+    if box then
+      for j=1,box:size(1) do
+        scores[i][box[j][1]+1] = box[j][6];
+        offsets[i][box[j][1]+1] = box[j][{{2,5}}];
+      end
+    end
   end
-  return {boxes, scores:view(-1)}
+  return {scores:view(-1), offsets}
 end
 
 function M:forward(pathNames, inputs, deterministic)

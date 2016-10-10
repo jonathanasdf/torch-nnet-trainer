@@ -9,18 +9,18 @@ function M:__init(model, processorOpts)
   self.cmd:option('-inceptionPreprocessing', false, 'preprocess for inception models (RGB, [-1, 1))')
   self.cmd:option('-caffePreprocessing', false, 'preprocess for caffe models (BGR, [0, 255])')
   Processor.__init(self, model, processorOpts)
-  assert(self.processorOpts.cropSize <= self.processorOpts.resize)
+  assert(self.cropSize <= self.resize)
 
   self.criterion = nn.TrueNLLCriterion(nil, false):cuda()
 
   local synset = '/file1/imagenet/ILSVRC2012_devkit_t12/words.txt'
-  if self.processorOpts.inceptionPreprocessing then
+  if self.inceptionPreprocessing then
     synset = '/file1/imagenet/inception_synset.txt'
-  elseif self.processorOpts.caffePreprocessing then
-    self.processorOpts.meanPixel = torch.Tensor{103.939, 116.779, 123.68}:view(3, 1, 1)
+  elseif self.caffePreprocessing then
+    self.meanPixel = torch.Tensor{103.939, 116.779, 123.68}:view(3, 1, 1)
   else
-    self.processorOpts.meanPixel = torch.Tensor{0.485, 0.456, 0.406}:view(3, 1, 1)
-    self.processorOpts.std = torch.Tensor{0.229, 0.224, 0.225}:view(3, 1, 1)
+    self.meanPixel = torch.Tensor{0.485, 0.456, 0.406}:view(3, 1, 1)
+    self.std = torch.Tensor{0.229, 0.224, 0.225}:view(3, 1, 1)
   end
 
   self.words = {}
@@ -60,16 +60,16 @@ function M:preprocess(path, augmentations)
   local img = image.load(path, 3)
 
   local augs = {}
-  augs[#augs+1] = Transforms.ScaleKeepAspect(self.processorOpts.resize)
-  augs[#augs+1] = Transforms.CenterCrop(self.processorOpts.cropSize)
+  augs[#augs+1] = Transforms.ScaleKeepAspect(self.resize)
+  augs[#augs+1] = Transforms.CenterCrop(self.cropSize)
   img = Transforms.Apply(augs, img)
 
-  if self.processorOpts.inceptionPreprocessing then
+  if self.inceptionPreprocessing then
     img = (img * 255 - 128) / 128
-  elseif self.processorOpts.caffePreprocessing then
-    img = (convertRGBBGR(img) * 255):csub(self.processorOpts.meanPixel:expandAs(img))
+  elseif self.caffePreprocessing then
+    img = (convertRGBBGR(img) * 255):csub(self.meanPixel:expandAs(img))
   else
-    img = img:csub(self.processorOpts.meanPixel:expandAs(img)):cdiv(self.processorOpts.std:expandAs(img))
+    img = img:csub(self.meanPixel:expandAs(img)):cdiv(self.std:expandAs(img))
   end
   return img:cuda(), augs
 end
