@@ -62,14 +62,14 @@ function M:updateStats(pathNames, outputs, labels)
 end
 
 -- values length is batchSize * boxesPerImage
-function M:drawROC(pathNames, values)
-  if self.processorOpts.drawROC ~= '' then
+function M:outputBoxes(pathNames, values)
+  if self.processorOpts.outputBoxes ~= '' then
     local n = self.processorOpts.boxesPerImage;
     for i=1,#pathNames do
       local path = pathNames[i]
-      local set, video, id = path:match("set(.-)_V(.-)_I(.-)%.")
+      local set, video, id = path:match("/set(.-)_V(.-)_I(.-)%.")
 
-      local filename = self.processorOpts.drawROCDir .. 'set' .. set .. '/V' .. video .. '/I' .. id .. '.txt'
+      local filename = self.processorOpts.outputBoxes .. 'set' .. set .. '/V' .. video .. '/I' .. id .. '.txt'
       local file, err = io.open(filename, 'a')
       if not(file) then error(err) end
 
@@ -86,7 +86,7 @@ end
 
 function M:test(pathNames)
   local loss, total = Processor.test(self, pathNames)
-  self:drawROC(pathNames, self.model.output[2][{{}, 2}])
+  self:outputBoxes(pathNames, self.model.output[2][{{}, 2}])
   return loss, total
 end
 

@@ -15,21 +15,23 @@ local M, Parent = torch.class('Model', 'nn.Decorator')
 function M:__init(specStr)
   local args = specStr:split(' ');
   if #args < 2 then
-    error('Model specifications must be in the form: <model> <processor> [-options].')
+    error('Model specifications must be in the form: <model> [-options] <processor> [-options].')
   end
   local path = table.remove(args, 1)
+  local modelOpts = {}
   local processorPath = table.remove(args, 1)
+  while string.sub(processorPath, -4) ~= '.lua' do
+    modelOpts[#modelOpts+1] = processorPath
+    processorPath = table.remove(args, 1)
+  end
 
   assert(paths.filep(path), 'Cannot find model ' .. path)
   assert(paths.filep(processorPath), 'Cannot find processor ' .. processorPath)
 
   nn.DataParallelTable.deserializeNGPUs = opts.nGPU
-  self:load(path)
+  self:load(path, table.concat(modelOpts, ' '))
+  self.processor = requirePath(processorPath).new(self, table.concat(args, ' '))
 
-  local processorOpts = table.concat(args, ' ')
-  self.processor = requirePath(processorPath).new(self, processorOpts)
-
-  setDropout(self.module, processorOpts.dropout)
   self.module:zeroGradParameters()
   Parent.__init(self, self.module)
   self:cuda()
@@ -69,11 +71,11 @@ local function loadSavedModel(filename)
   return model
 end
 
-function M:load(path)
+function M:load(path, modelOpts)
   assert(paths.filep(path), 'File not found: ' .. path)
   if paths.extname(path) == 'lua' then
     print('Creating model from file: ' .. path)
-    self.module = requirePath(path)
+    self.module = requirePath(path)(modelOpts)
     cudnn.convert(self.module, cudnn)
   else
     print('Loading model from file: ' .. path)

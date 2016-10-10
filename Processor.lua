@@ -6,7 +6,6 @@ local M = torch.class('Processor')
 
 M.cmd = torch.CmdLine()
 function M:__init(model, processorOpts)
-  self.cmd:option('-dropout', -1, 'dropout probability. -1 means leave it untouched')
   self.model = model
   self.processorOpts = self.cmd:parse(processorOpts:split(' ='))
 end
@@ -143,7 +142,6 @@ function M:test(pathNames)
   local loss = self.criterion and self.criterion:forward(outputs, labels) or 0
 
   self:updateStats(pathNames, outputs, labels)
-
   return loss, #pathNames
 end
 
