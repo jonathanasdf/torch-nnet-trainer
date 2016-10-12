@@ -105,6 +105,18 @@ function requirePath(path)
   return M
 end
 
+function tformat(tbl, indent)
+  if not indent then indent = 0 end
+  for k, v in pairs(tbl) do
+    formatting = string.rep("  ", indent) .. k .. ": "
+    if type(v) == "table" then
+      return formatting .. '\n' .. tformat(v, indent+1)
+    else
+      return formatting .. tostring(v)
+    end
+  end
+end
+
 function tablelength(T)
   local count = 0
   for _ in pairs(T) do count = count + 1 end

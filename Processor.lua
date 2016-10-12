@@ -93,8 +93,16 @@ function M:getLoss(outputs, labels)
   end
 
   local loss = self.criterion:forward(outputs, labels)
-  local gradInputs = self.criterion:backward(outputs, labels)
-  return loss, gradInputs
+  local gradOutputs = self.criterion:backward(outputs, labels)
+  if type(gradOutputs) == 'table' then
+    for i=1,#gradOutputs do
+      gradOutputs[i] = gradOutputs[i] / opts.batchCount
+    end
+  else
+    gradOutputs = gradOutputs / opts.batchCount
+  end
+
+  return loss, gradOutputs
 end
 
 -- Only called by TrainStudentModel.lua
@@ -128,13 +136,6 @@ function M:train(pathNames)
   local outputs = self:forward(pathNames, inputs)
   local labels = self:getLabels(pathNames, outputs)
   local loss, gradOutputs = self:getLoss(outputs, labels)
-  if type(gradOutputs) == 'table' then
-    for i=1,#gradOutputs do
-      gradOutputs[i] = gradOutputs[i] / opts.batchCount
-    end
-  else
-    gradOutputs = gradOutputs / opts.batchCount
-  end
   self:backward(inputs, gradOutputs)
 
   self:updateStats(pathNames, outputs, labels)
