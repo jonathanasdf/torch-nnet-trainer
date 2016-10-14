@@ -29,19 +29,19 @@ function M:getLoss(outputs, labels)
     end
   end
 
-  for i=1,#outputs do
-    for j=i+1,#outputs do
-      for k=1,labels:size(1) do
-        local I = {outputs[i][1][k], outputs[j][1][k]}
-        local d = self.pairwiseDistance:forward(I)
-        loss = loss + self.hingeCriterion:forward(d, -1)
-        local g = self.hingeCriterion:backward(d, -1)
-        local gradInputs = self.pairwiseDistance:backward(I, g)
-        gradOutputs[i][1][k] = gradOutputs[i][1][k] + gradInputs[1] / (#outputs-1) / opts.batchCount
-        gradOutputs[j][1][k] = gradOutputs[j][1][k] + gradInputs[2] / (#outputs-1) / opts.batchCount
-      end
-    end
-  end
+  --for i=1,#outputs do
+  --  for j=i+1,#outputs do
+  --    for k=1,labels:size(1) do
+  --      local I = {outputs[i][1][k], outputs[j][1][k]}
+  --      local d = self.pairwiseDistance:forward(I)
+  --      loss = loss + self.hingeCriterion:forward(d, -1)
+  --      local g = self.hingeCriterion:backward(d, -1)
+  --      local gradInputs = self.pairwiseDistance:backward(I, g)
+  --      gradOutputs[i][1][k] = gradOutputs[i][1][k] + gradInputs[1] / opts.batchCount
+  --      gradOutputs[j][1][k] = gradOutputs[j][1][k] + gradInputs[2] / opts.batchCount
+  --    end
+  --  end
+  --end
 
   return loss, gradOutputs
 end

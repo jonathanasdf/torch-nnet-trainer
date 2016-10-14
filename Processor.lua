@@ -106,21 +106,28 @@ function M:getLoss(outputs, labels)
 end
 
 -- Only called by TrainStudentModel.lua
-function M:getStudentLoss(outputs, labels)
-  local softCriterion
-  if opts.useCOV then
-    if opts.dropoutBayes == 1 then
-      error('useCOV requires dropoutBayes. Please set useMSE if not using dropout.')
+function M:getStudentLoss(studentOutputs, teacherOutputs)
+  if self.softCriterion == nil then
+    if opts.useCOV then
+      if opts.dropoutBayes == 1 then
+        error('useCOV requires dropoutBayes. Please set useMSE if not using dropout.')
+      end
+      self.softCriterion = nn.MSECovCriterion(false)
+    elseif opts.useMSE then
+      self.softCriterion = nn.MSECriterion(false)
+    else
+      -- TODO: SoftCrossEntropyCriterion needs to be logified
+      -- self.softCriterion = nn.SoftCrossEntropyCriterion(opts.T, false)
+      self.softCriterion = nn.MSECriterion(false)
     end
-    softCriterion = nn.MSECovCriterion(false)
-  elseif opts.useMSE then
-    softCriterion = nn.MSECriterion(false)
-  else
-    -- TODO: SoftCrossEntropyCriterion needs to be logified
-    -- softCriterion = nn.SoftCrossEntropyCriterion(opts.T, false)
-    softCriterion = nn.MSECriterion(false)
+    self.softCriterion = self.softCriterion:cuda()
   end
-  return softCriterion:cuda()
+
+  local criterion = self.criterion
+  self.criterion = self.softCriterion
+  local loss, gradOutputs = M.getLoss(self, studentOutputs, teacherOutputs)
+  self.criterion = criterion
+  return loss, gradOutputs
 end
 
 -- Called before each validation/test run

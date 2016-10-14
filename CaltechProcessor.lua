@@ -304,7 +304,7 @@ function M:getStats()
   return tostring(self.stats)
 end
 
-function M:outputBoxes(pathNames, values)
+function M:printBoxes(pathNames, values)
   if self.outputBoxes ~= '' then
     for i=1,#pathNames do
       local path = pathNames[i]
@@ -315,7 +315,7 @@ function M:outputBoxes(pathNames, values)
       if not(file) then error(err) end
 
       local box = self.boxes[paths.basename(path)]
-      file:write(box[1]-1, ' ',  box[2]-1, ' ', box[3]-box[1]+1, ' ', box[4]-box[2]+1, ' ', values[i], '\n')
+      file:write(box[1]-1, ' ',  box[2]-1, ' ', box[3]-box[1]+1, ' ', box[4]-box[2]+1, ' ', values[i][2], '\n')
       file:close()
     end
   end
@@ -323,7 +323,7 @@ end
 
 function M:test(pathNames)
   local loss, total = Processor.test(self, pathNames)
-  self:outputBoxes(pathNames, self.model.output[{{}, 2}])
+  self:printBoxes(pathNames, self.model.output)
   return loss, total
 end
 

@@ -21,7 +21,7 @@ function M:train()
 end
 
 function M:test(pathNames)
-  self:outputBoxes(pathNames, torch.ones(#pathNames))
+  self:printBoxes(pathNames, torch.ones(#pathNames))
   return 0, #pathNames
 end
 
