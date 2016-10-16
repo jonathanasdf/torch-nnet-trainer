@@ -7,7 +7,7 @@ function M:__init(model, processorOpts)
 
   CaltechProcessor.__init(self, model, processorOpts)
 
-  local boxesFile = '/file1/caltechrpn/boxes.txt'
+  local boxesFile = '/file1/caltechrpn/ssd_boxes.txt'
   self.nBoxes = 0
   for _ in io.lines(boxesFile) do
     self.nBoxes = self.nBoxes + 1
@@ -17,6 +17,8 @@ function M:__init(model, processorOpts)
   df:readFloat(self.boxes:storage())
   df:close()
   self.boxes = self.boxes:cuda()
+
+  self.gt = torch.load('/file1/caltech10x/gt_ssd.t7')
 
   if self.criterionWeights and self.criterionWeights ~= '' then
     self.criterionWeights = torch.Tensor(self.criterionWeights:split(';'))
@@ -52,18 +54,20 @@ function M:preprocess(path, augmentations)
 end
 
 -- outputs = {scores, offsets}
--- Returned labels = {highest iou > 0.5, offsets}
-local check_gt = requirePath('/data/rpn/datasets/check_gt.lua')
 function M:getLabels(pathNames, outputs)
-  local boxes = outputs[1]
   local n = self.nBoxes
   local pos = torch.zeros(#pathNames, n):cuda()
   local offsets = torch.zeros(#pathNames, n, 4):cuda()
   for i=1,#pathNames do
-    closest[i], labels[i] = check_gt(paths.basename(pathNames[i]), boxes[i])
+    local name = paths.basename(pathNames[i], '.jpg')
+    local box = self.gt[name]
+    if box then
+      for j=1,box:size(1) do
+        pos[i][box[j][1]] = 1;
+        offsets[i][box[j][1]] = box[j][{{2,5}}];
+      end
+    end
   end
-  -- pos is {0, 1} but in torch we need it to be 1-indexed
-  pos = pos + 1
   return {pos, offsets}
 end
 

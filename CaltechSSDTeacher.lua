@@ -1,10 +1,12 @@
 local CaltechProcessor = require 'CaltechProcessor'
-local M = torch.class('CaltechRPNProvider', 'CaltechProcessor')
+local M = torch.class('CaltechSSDTeacher', 'CaltechProcessor')
 
 function M:__init(model, processorOpts)
+  self.cmd:option('-provider', '/file1/caltechrpn/ssd.t7', 'Teacher SSD data file.')
+
   CaltechProcessor.__init(self, model, processorOpts)
 
-  local boxesFile = '/file1/caltechrpn/boxes.txt'
+  local boxesFile = '/file1/caltechrpn/ssd_boxes.txt'
   self.nBoxes = 0
   for _ in io.lines(boxesFile) do
     self.nBoxes = self.nBoxes + 1
@@ -15,7 +17,7 @@ function M:__init(model, processorOpts)
   df:close()
   self.boxes = self.boxes:cuda()
 
-  self.data = torch.load('/file1/caltechrpn/ssd.t7')
+  self.data = torch.load(self.provider)
 end
 
 function M:getLoss(outputs, labels)

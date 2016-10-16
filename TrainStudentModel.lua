@@ -99,6 +99,7 @@ local function train(pathNames)
   local studentLayerOutputs = studentContainer:get(studentLayer).output
 
   if opts.useCOV then
+    error('useCOV is broken right now.')
     local cov = teacherLayerOutputs.new(teacherLayerOutputs:size(1), teacherLayerOutputs:size(2), teacherLayerOutputs:size(2)):zero()
     for i=1,teacherLayerOutputs:size(1) do
       for j=1,opts.dropoutBayes do
