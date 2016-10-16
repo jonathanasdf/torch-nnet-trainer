@@ -4,7 +4,7 @@ Not very polished, for personal use. Lots of hardcoded paths and small changes t
 
 ## Dependencies
 
-cudnn, dpnn, image, optim
+cudnn, dpnn, image, optim, vararg, luaposix
 
 ## Example
 
