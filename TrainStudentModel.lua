@@ -111,7 +111,7 @@ local function train(pathNames)
     softCriterion.invcov = cov
   end
 
-  local loss, softGradOutputs = teacher.processor:getStudentLoss(studentLayerOutputs, teacherLayerOutputs)
+  local loss, softGradOutputs = teacher.processor:getStudentLoss(student, studentLayerOutputs, teacherLayerOutputs)
   if opts.dropoutBayes > 1 and not opts.useCOV then
     softGradOutputs = torch.cdiv(softGradOutputs, variance)
   end

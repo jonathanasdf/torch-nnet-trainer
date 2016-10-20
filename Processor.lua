@@ -106,7 +106,7 @@ function M:getLoss(outputs, labels)
 end
 
 -- Only called by TrainStudentModel.lua
-function M:getStudentLoss(studentOutputs, teacherOutputs)
+function M:getStudentLoss(student, studentOutputs, teacherOutputs)
   if self.softCriterion == nil then
     if opts.useCOV then
       if opts.dropoutBayes == 1 then

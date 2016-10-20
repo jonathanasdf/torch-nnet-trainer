@@ -2,7 +2,7 @@ local CaltechProcessor = require 'CaltechProcessor'
 local M = torch.class('CaltechSSDTeacher', 'CaltechProcessor')
 
 function M:__init(model, processorOpts)
-  self.cmd:option('-provider', '/file1/caltechrpn/ssd.t7', 'Teacher SSD data file.')
+  self.cmd:option('-provider', '/file1/mscnn/ssd.t7', 'Teacher SSD data file.')
 
   CaltechProcessor.__init(self, model, processorOpts)
 
@@ -25,15 +25,12 @@ function M:getLoss(outputs, labels)
 end
 
 -- Only called by TrainStudentModel.lua
-function M:getStudentLoss(studentOutputs, teacherOutputs)
-  local smoothL1Criterion = nn.SmoothL1Criterion()
-  smoothL1Criterion.sizeAverage = false
-  local criterion = nn.ParallelCriterion()
-    :add(softCriterion)
-    :add(smoothL1Criterion)
-    :cuda()
-  criterion.sizeAverage = false
-  return criterion
+function M:getStudentLoss(student, studentOutputs, teacherOutputs)
+  local classLoss, classGrad = CaltechProcessor.getStudentLoss(self, student, studentOutputs[1], teacherOutputs[1])
+  local bboxLoss = student.processor.smoothL1Criterion:forward(studentOutputs[2], teacherOutputs[2]);
+  local bboxGrad = student.processor.smoothL1Criterion:backward(studentOutputs[2], teacherOutputs[2]);
+  return classLoss * student.processor.classWeight + bboxLoss * student.processor.bboxWeight,
+         {classGrad * student.processor.classWeight, bboxGrad * student.processor.bboxWeight}
 end
 
 function M:prepareBoxes() end
@@ -57,10 +54,13 @@ function M:getLabels(pathNames, outputs)
       end
     end
   end
+  scores = scores:view(-1)
   return {scores, offsets}
 end
 
 function M:forward(pathNames, inputs, deterministic)
+  local labels = self:getLabels(pathName)
+  labels[1] = torch.cat(labels[1], torch.add(torch.mul(labels[1], -1), 1))
   return CaltechProcessor.forward(self, pathNames, self:getLabels(pathNames), deterministic)
 end
 
@@ -73,6 +73,7 @@ function M:updateStats(pathNames, outputs, labels) end
 -- values = {scores, offsets}
 function M:printBoxes(pathNames, values)
   if self.outputBoxes ~= '' then
+    local n = self.nBoxes
     for i=1,#pathNames do
       local path = pathNames[i]
       local set, video, id = path:match("/set(.-)_V(.-)_I(.-)%.")
@@ -81,10 +82,10 @@ function M:printBoxes(pathNames, values)
       local file, err = io.open(filename, 'a')
       if not(file) then error(err) end
 
-      for j=1,self.nBoxes do
-        if self.model.output[1][i][j] > 0 then
+      for j=1,n do
+        if self.model.output[1][(i-1)*n+j] > 0 then
           local box = self.boxes[j] + self.model.output[2][i][j]
-          file:write(box[1]-box[3]/2, ' ', box[2]-box[4]/2, ' ', box[3], ' ', box[4], ' ', self.model.output[1][i][j], '\n')
+          file:write(box[1]-box[3]/2, ' ', box[2]-box[4]/2, ' ', box[3], ' ', box[4], ' ', self.model.output[1][(i-1)*n+j], '\n')
         end
       end
       file:close()

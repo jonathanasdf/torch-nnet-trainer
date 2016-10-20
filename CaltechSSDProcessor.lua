@@ -3,7 +3,9 @@ local CaltechProcessor = require 'CaltechProcessor'
 local M = torch.class('CaltechSSDProcessor', 'CaltechProcessor')
 
 function M:__init(model, processorOpts)
-  self.cmd:option('-criterionWeights', '', 'semicolon separated weights for pos/neg')
+  self.cmd:option('-classWeight', 1, 'weight for classification criterion')
+  self.cmd:option('-posNegWeight', '', 'semicolon separated weights for pos/neg')
+  self.cmd:option('-bboxWeight', 1, 'weight for bbox regression criterion')
 
   CaltechProcessor.__init(self, model, processorOpts)
 
@@ -20,21 +22,21 @@ function M:__init(model, processorOpts)
 
   self.gt = torch.load('/file1/caltech10x/gt_ssd.t7')
 
-  if self.criterionWeights and self.criterionWeights ~= '' then
-    self.criterionWeights = torch.Tensor(self.criterionWeights:split(';'))
-    for i=1,self.criterionWeights:size(1) do
-      self.criterionWeights[i] = tonumber(self.criterionWeights[i])
+  if self.posNegWeight and self.posNegWeight ~= '' then
+    self.posNegWeight = torch.Tensor(self.posNegWeight:split(';'))
+    for i=1,self.posNegWeight:size(1) do
+      self.posNegWeight[i] = tonumber(self.posNegWeight[i])
     end
   else
-    self.criterionWeights = nil
+    self.posNegWeight = nil
   end
 
-  local smoothL1Criterion = nn.SmoothL1Criterion()
-  smoothL1Criterion.sizeAverage = false
+  self.classCriterion = nn.CrossEntropyCriterion(self.posNegWeight, false):cuda()
+  self.smoothL1Criterion = nn.SmoothL1Criterion():cuda()
+  self.smoothL1Criterion.sizeAverage = false
   self.criterion = nn.ParallelCriterion()
-    :add(nn.CrossEntropyCriterion(self.criterionWeights, false))
-    :add(smoothL1Criterion)
-    :cuda()
+    :add(self.classCriterion, self.classWeight)
+    :add(self.smoothL1Criterion, self.bboxWeight)
   self.criterion.sizeAverage = false
 end
 
@@ -68,16 +70,35 @@ function M:getLabels(pathNames, outputs)
       end
     end
   end
-  return {pos, offsets}
+  -- pos is 0/1 but torch needs 1/2 for classes
+  pos = pos + 1
+  return {pos:view(-1), offsets}
+end
+
+function M:resetStats()
+  CaltechProcessor.resetStats(self)
+  self.classLoss = 0
+  self.bboxLoss = 0
+  self.count = 0
 end
 
 function M:updateStats(pathNames, outputs, labels)
   self.stats:batchAdd(outputs[1], labels[1])
+  self.classLoss = self.classLoss + self.classCriterion:forward(outputs[1], labels[1])
+  self.bboxLoss = self.bboxLoss + self.smoothL1Criterion:forward(outputs[2], labels[2])
+  self.count = self.count + #pathNames
+end
+
+function M:getStats()
+  print("Classification loss: ", self.classLoss / self.count)
+  print("Bounding boxes loss: ", self.bboxLoss / self.count)
+  return CaltechProcessor.getStats(self)
 end
 
 -- values = {scores, offsets}
 function M:printBoxes(pathNames, values)
   if self.outputBoxes ~= '' then
+    local n = self.nBoxes
     for i=1,#pathNames do
       local path = pathNames[i]
       local set, video, id = path:match("/set(.-)_V(.-)_I(.-)%.")
@@ -86,10 +107,10 @@ function M:printBoxes(pathNames, values)
       local file, err = io.open(filename, 'a')
       if not(file) then error(err) end
 
-      for j=1,self.nBoxes do
-        if self.model.output[1][i][j] > 0 then
+      for j=1,n do
+        if self.model.output[1][(i-1)*n+j][2] > self.model.output[1][(i-1)*n+j][1] then
           local box = self.boxes[j] + self.model.output[2][i][j]
-          file:write(box[1]-box[3]/2, ' ', box[2]-box[4]/2, ' ', box[3], ' ', box[4], ' ', self.model.output[1][i][j], '\n')
+          file:write(box[1]-box[3]/2, ' ', box[2]-box[4]/2, ' ', box[3], ' ', box[4], ' ', self.model.output[1][(i-1)*n+j][2], '\n')
         end
       end
       file:close()

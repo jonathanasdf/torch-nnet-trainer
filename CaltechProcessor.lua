@@ -5,10 +5,10 @@ local Processor = require 'Processor'
 local M = torch.class('CaltechProcessor', 'Processor')
 
 function M:__init(model, processorOpts)
-  self.cmd:option('-imageSize', 113, 'input patch size')
+  self.cmd:option('-imageSize', 224, 'input patch size')
   self.cmd:option('-inceptionPreprocessing', false, 'preprocess for inception models (RGB, [-1, 1))')
   self.cmd:option('-caffePreprocessing', false, 'preprocess for caffe models (BGR, [0, 255])')
-  self.cmd:option('-flip', 0.5, 'probability to do horizontal flip (for training)')
+  self.cmd:option('-flip', 0, 'probability to do horizontal flip (for training)')
   self.cmd:option('-negativesWeight', 1, 'relative weight of negative examples')
   self.cmd:option('-outputBoxes', '', 'set a directory to output boxes to')
   self.cmd:option('-drawROC', '', 'set a directory to use for full evaluation')
@@ -28,7 +28,7 @@ function M:__init(model, processorOpts)
 
   local w = self.negativesWeight
   local weights = torch.Tensor{w/(1+w), 1/(1+w)} * 2
-  self.criterion = nn.TrueNLLCriterion(weights, false):cuda()
+  self.criterion = nn.CrossEntropyCriterion(weights, false):cuda()
 
   if self.drawROC ~= '' then
     if self.outputBoxes == '' then
@@ -192,7 +192,11 @@ end
 function M:getLabels(pathNames, outputs)
   local labels = torch.Tensor(#pathNames)
   for i=1,#pathNames do
-    labels[i] = pathNames[i]:find('neg') and 1 or 2
+	if pathNames[i]:find('cyclist') then
+		labels[i] = 3
+	else
+		labels[i] = pathNames[i]:find('neg') and 1 or 2
+	end
   end
   return labels:cuda()
 end
