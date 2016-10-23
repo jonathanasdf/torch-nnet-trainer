@@ -82,15 +82,10 @@ function M:initDrawROC()
   opts.drawROCInputs = {}
   local inputs
   if opts.phase == 'test' then
-    if self.drawROC ~= '' and opts.epochSize ~= -1 then
-      error('sorry, drawROC can only be used with epochSize == -1')
-    end
     inputs = opts.input
   else -- val
     if opts.val == '' then
       error('drawROC specified without validation data?')
-    elseif self.drawROC ~= '' and opts.valSize ~= -1 then
-      error('sorry, drawROC can only be used with valSize == -1')
     end
     inputs = opts.val
   end
@@ -116,21 +111,6 @@ function M:initDrawROC()
         paths.mkdir(self.drawROC)
       end
     end
-
-    -- make sure paths exist
-    print('Preparing boxes directory.')
-    if opts.drawROCInputs['train'] then
-      if self.drawROC ~= '' then
-        error('Using train with drawROC is not supported.')
-      end
-      os.execute('cat /file1/caltech10x/train/dirs.txt | awk \'{print "' .. self.outputBoxes .. '"$0}\' | xargs mkdir -p')
-    end
-    if opts.drawROCInputs['val'] then
-      os.execute('cat /file1/caltech10x/val/dirs.txt | awk \'{print "' .. self.outputBoxes .. '"$0}\' | xargs mkdir -p')
-    end
-    if opts.drawROCInputs['test'] then
-      os.execute('cat /file1/caltech10x/test5/dirs.txt | awk \'{print "' .. self.outputBoxes .. '"$0}\' | xargs mkdir -p')
-    end
   end
 
   self:prepareBoxes()
@@ -138,7 +118,7 @@ end
 
 function M:prepareBoxes()
   if self.boxes == '' then
-    error('Please specify boxes file. Example: /file1/caltech10x/test5/box.mat')
+    error('Please specify boxes file. Example: /file1/caltech10x/test/box.mat')
   end
   local matio = require 'matio'
   matio.use_lua_strings = true
@@ -203,14 +183,7 @@ end
 
 function M:resetStats()
   self.stats = optim.ConfusionMatrix({'no person', 'person'})
-  if self.drawROC ~= '' then
-    if opts.drawROCInputs['val'] then
-      os.execute('cat /file1/caltech10x/val/files.txt | awk \'{print "' .. self.outputBoxes .. '"$0}\' | xargs truncate -s 0')
-    end
-    if opts.drawROCInputs['test'] then
-      os.execute('cat /file1/caltech10x/test5/files.txt | awk \'{print "' .. self.outputBoxes .. '"$0}\' | xargs truncate -s 0')
-    end
-  elseif self.outputBoxes ~= '' then
+  if self.outputBoxes ~= '' then
     os.execute('find ' .. self.outputBoxes .. ' -type f -exec rm {} \\;')
   end
 end
@@ -224,24 +197,24 @@ function M:getStats()
   if opts.phase ~= 'train' then
     if self.outputBoxes ~= '' then
       print("Printing boxes...")
-      -- remove duplicate boxes
-      local total = 0
-      for _, attr in dirtree(self.outputBoxes) do
-        if attr.mode == 'file' and attr.size > 0 then
-          total = total + 1
+      if self.nonms then
+        -- remove duplicate boxes
+        local total = 0
+        for _, attr in dirtree(self.outputBoxes) do
+          if attr.mode == 'file' and attr.size > 0 then
+            total = total + 1
+          end
         end
-      end
-      local count = 0
-      for filename, attr in dirtree(self.outputBoxes) do
-        if attr.mode == 'file' and attr.size > 0 then
-          os.execute("gawk -i inplace '!a[$0]++' " .. filename)
-          count = count + 1
-          xlua.progress(count, total)
+        local count = 0
+        for filename, attr in dirtree(self.outputBoxes) do
+          if attr.mode == 'file' and attr.size > 0 then
+            os.execute("gawk -i inplace '!a[$0]++' " .. filename)
+            count = count + 1
+            xlua.progress(count, total)
+          end
         end
-      end
-
-      -- do nms
-      if not self.nonms then
+      else
+        -- do nms
         nmsCaltech(self.outputBoxes)
       end
     end
@@ -262,9 +235,9 @@ function M:getStats()
       dataName = dataName .. '}'
       local cmd
       if opts.phase == 'test' then
-        cmd = "cd /file1/caltech; dbEval('" .. self.drawROC .. "', " .. dataName .. ", '" .. self.name .. "')"
+        cmd = "cd /file1/caltech; addpath(genpath('toolbox')); dbEval('" .. self.drawROC .. "', " .. dataName .. ", '" .. self.name .. "')"
       elseif opts.phase == 'val' then
-        cmd = "cd /file1/caltech; dbEvalVal('" .. self.drawROC .. "', " .. dataName .. ")"
+        cmd = "cd /file1/caltech; addpath(genpath('toolbox')); dbEvalVal('" .. self.drawROC .. "', " .. dataName .. ")"
       end
       print("Running MATLAB script...")
       print(runMatlab(cmd))
@@ -315,11 +288,12 @@ function M:printBoxes(pathNames, values)
       local set, video, id = path:match("set(.-)_V(.-)_I(.-)_")
 
       local filename = self.outputBoxes .. 'set' .. set .. '/V' .. video .. '/I' .. id .. '.txt'
+      mkdir(filename)
       local file, err = io.open(filename, 'a')
       if not(file) then error(err) end
 
       local box = self.boxes[paths.basename(path)]
-      file:write(box[1]-1, ' ',  box[2]-1, ' ', box[3]-box[1]+1, ' ', box[4]-box[2]+1, ' ', values[i][2], '\n')
+      file:write(box[1]-1, ' ',  box[2]-1, ' ', box[3], ' ', box[4], ' ', values[i][2], '\n')
       file:close()
     end
   end

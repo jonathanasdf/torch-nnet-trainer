@@ -79,6 +79,7 @@ function M:printBoxes(pathNames, values)
       local set, video, id = path:match("/set(.-)_V(.-)_I(.-)%.")
 
       local filename = self.outputBoxes .. 'set' .. set .. '/V' .. video .. '/I' .. id .. '.txt'
+      mkdir(filename)
       local file, err = io.open(filename, 'a')
       if not(file) then error(err) end
 

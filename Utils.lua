@@ -194,6 +194,14 @@ function readAll(file)
     return content
 end
 
+function mkdir(file)
+  local dirname = file
+  if paths.extname(file) then
+    dirname = paths.dirname(file)
+  end
+  os.execute('mkdir -p ' .. dirname)
+end
+
 function dirtree(dir)
   -- Code by David Kastrup
   require "lfs"
