@@ -4,7 +4,7 @@ local M = torch.class('CifarDeepTreeProcessor', 'CifarProcessor')
 function M:__init(model, processorOpts)
   CifarProcessor.__init(self, model, processorOpts)
 
-  self.criterion = nn.TrueNLLCriterion(nil, false):cuda()
+  self.criterion = nn.CrossEntropyCriterion(nil, false):cuda()
   self.pairwiseDistance = nn.PairwiseDistance(2):cuda()
   self.hingeCriterion = nn.HingeEmbeddingCriterion():cuda()
 end

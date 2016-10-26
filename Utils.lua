@@ -130,12 +130,6 @@ function tableContains(T, entry)
   return false
 end
 
-function cat(T1, T2, dim)
-  if T1:nElement() == 0 then return T2:clone() end
-  if T2:nElement() == 0 then return T1:clone() end
-  return torch.cat(T1, T2, dim)
-end
-
 local RGBBGR = torch.LongTensor{3,2,1}
 function convertRGBBGR(T, dim)
   if not dim then dim = 1 end

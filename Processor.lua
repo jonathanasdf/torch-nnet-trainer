@@ -116,9 +116,7 @@ function M:getStudentLoss(student, studentOutputs, teacherOutputs)
     elseif opts.useMSE then
       self.softCriterion = nn.MSECriterion(false)
     else
-      -- TODO: SoftCrossEntropyCriterion needs to be logified
-      -- self.softCriterion = nn.SoftCrossEntropyCriterion(opts.T, false)
-      self.softCriterion = nn.MSECriterion(false)
+      self.softCriterion = nn.SoftCrossEntropyCriterion(opts.T, nil, false)
     end
     self.softCriterion = self.softCriterion:cuda()
   end

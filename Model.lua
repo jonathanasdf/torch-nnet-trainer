@@ -51,7 +51,7 @@ local function makeDataParallelTable(model, nGPU)
       local dpt = nn.DataParallelTable(1, true, true)
          :add(model, gpus)
          :threads(function()
-            require 'cudnn'
+            require 'Model'
             cudnn.fastest, cudnn.benchmark = fastest, benchmark
          end)
       dpt.gradInput = nil

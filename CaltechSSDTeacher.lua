@@ -61,7 +61,7 @@ end
 function M:forward(pathNames, inputs, deterministic)
   local labels = self:getLabels(pathName)
   labels[1] = torch.cat(labels[1], torch.add(torch.mul(labels[1], -1), 1))
-  return CaltechProcessor.forward(self, pathNames, self:getLabels(pathNames), deterministic)
+  return CaltechProcessor.forward(self, pathNames, labels, deterministic)
 end
 
 function M:train()

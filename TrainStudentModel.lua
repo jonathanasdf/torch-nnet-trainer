@@ -28,16 +28,16 @@ local teacher = Model(opts.teacher)
 local student = Model(opts.student)
 
 local studentContainer = student
-while #studentContainer.modules == 1 do
+while #studentContainer.modules == 1 and studentContainer.modules[1].modules do
   studentContainer = studentContainer.modules[1]
 end
 local studentLayer = #studentContainer.modules - opts.matchLayer + 1
 
 local teacherContainer = teacher
-while #teacherContainer.modules == 1 do
+while #teacherContainer.modules == 1 and teacherContainer.modules[1].modules do
   teacherContainer = teacherContainer.modules[1]
 end
-local teacherLayer = #teacherContainer.modules - opts.matchLayer + 1
+local teacherLayer = math.max(1, #teacherContainer.modules - opts.matchLayer + 1)
 
 if opts.copyTeacherLayers then
   for i=studentLayer+1,#studentContainer.modules do

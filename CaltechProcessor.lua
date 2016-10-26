@@ -1,4 +1,3 @@
-require 'nn.TrueNLLCriterion'
 require 'nms'
 local Transforms = require 'Transforms'
 local Processor = require 'Processor'
@@ -82,10 +81,16 @@ function M:initDrawROC()
   opts.drawROCInputs = {}
   local inputs
   if opts.phase == 'test' then
+    if self.drawROC ~= '' and opts.epochSize ~= -1 then
+      error('drawROC can only be used with epochSize == -1')
+    end
     inputs = opts.input
   else -- val
     if opts.val == '' then
       error('drawROC specified without validation data?')
+    end
+    if self.drawROC ~= '' and opts.valSize ~= -1 then
+      error('drawROC can only be used with valSize == -1')
     end
     inputs = opts.val
   end
@@ -106,9 +111,9 @@ function M:initDrawROC()
         error('drawROC directory exists! Aborting.')
       end
     else
-      paths.mkdir(self.outputBoxes)
+      mkdir(self.outputBoxes)
       if self.drawROC ~= '' then
-        paths.mkdir(self.drawROC)
+        mkdir(self.drawROC)
       end
     end
   end
@@ -172,11 +177,11 @@ end
 function M:getLabels(pathNames, outputs)
   local labels = torch.Tensor(#pathNames)
   for i=1,#pathNames do
-	if pathNames[i]:find('cyclist') then
-		labels[i] = 3
-	else
-		labels[i] = pathNames[i]:find('neg') and 1 or 2
-	end
+    if pathNames[i]:find('cyclist') then
+      labels[i] = 3
+    else
+      labels[i] = pathNames[i]:find('neg') and 1 or 2
+    end
   end
   return labels:cuda()
 end
@@ -184,7 +189,7 @@ end
 function M:resetStats()
   self.stats = optim.ConfusionMatrix({'no person', 'person'})
   if self.outputBoxes ~= '' then
-    os.execute('find ' .. self.outputBoxes .. ' -type f -exec rm {} \\;')
+    os.execute('rm -rf ' .. self.outputBoxes)
   end
 end
 
@@ -287,8 +292,11 @@ function M:printBoxes(pathNames, values)
       local path = pathNames[i]
       local set, video, id = path:match("set(.-)_V(.-)_I(.-)_")
 
-      local filename = self.outputBoxes .. 'set' .. set .. '/V' .. video .. '/I' .. id .. '.txt'
-      mkdir(filename)
+      local dirname = self.outputBoxes .. 'set' .. set .. '/V' .. video .. '/'
+      local filename = dirname .. 'I' .. id .. '.txt'
+      if not paths.dirp(dirname) then
+        mkdir(dirname)
+      end
       local file, err = io.open(filename, 'a')
       if not(file) then error(err) end
 

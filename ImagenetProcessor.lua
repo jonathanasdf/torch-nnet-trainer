@@ -1,4 +1,3 @@
-require 'nn.TrueNLLCriterion'
 local Transforms = require 'Transforms'
 local Processor = require 'Processor'
 local M = torch.class('ImageNetProcessor', 'Processor')
@@ -11,7 +10,7 @@ function M:__init(model, processorOpts)
   Processor.__init(self, model, processorOpts)
   assert(self.cropSize <= self.resize)
 
-  self.criterion = nn.TrueNLLCriterion(nil, false):cuda()
+  self.criterion = nn.CrossEntropyCriterion(nil, false):cuda()
 
   local synset = '/file1/imagenet/ILSVRC2012_devkit_t12/words.txt'
   if self.inceptionPreprocessing then
