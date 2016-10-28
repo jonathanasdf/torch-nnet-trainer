@@ -229,8 +229,8 @@ function M:train(trainFn, valFn)
              bind(self.updateModel, self))
     self.loss = self.loss / self.count
     self.trainLoss[epoch] = self.loss
-    print(string.format('  Training loss: %.6f', self.loss))
-    logprint(self.processor:getStats())
+    print(string.format('  Training loss: %.6f', self.trainLoss[epoch]))
+    print(self.processor:getStats())
 
     if opts.val ~= '' and epoch % opts.valEvery == 0 then
       setPhase('val')
@@ -244,8 +244,8 @@ function M:train(trainFn, valFn)
                valFn,
                bind(self.accValResults, self))
       self.loss = self.loss / self.count
-      self.valLoss[epoch] = self.loss
-      print(string.format('  Validation loss: %.6f', self.loss))
+      self.valLoss[epoch] = self.loss * opts.valLossMultiplier
+      print(string.format('  Validation loss: %.6f', self.valLoss[epoch]))
       print(self.processor:getStats())
       print()
     end

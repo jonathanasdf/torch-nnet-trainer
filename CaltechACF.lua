@@ -1,5 +1,4 @@
-require 'torchzlib'
-
+require 'image'
 local Transforms = require 'Transforms'
 local CaltechProcessor = require 'CaltechProcessor'
 local M = torch.class('CaltechACFProcessor', 'CaltechProcessor')
@@ -24,9 +23,14 @@ function M:preprocess(path, augmentations)
       end
     end
   end
-  local dir = paths.dirname(paths.dirname(path)) .. '/acft7/'
+  local dir = paths.dirname(paths.dirname(path)) .. '/acf/'
   local name = paths.basename(path, '.png')
-  local imgs = torch.load(dir .. name .. '.t7'):decompress()
+  local img = image.loadPNG(dir .. name .. 'a.png')
+  local imgs = torch.Tensor(10, img:size(2), img:size(3));
+  imgs[{{1,3}, {}, {}}] = img;
+  imgs[{{4,6}, {}, {}}] = image.loadPNG(dir .. name .. 'b.png');
+  imgs[{{7,10}, {}, {}}] = image.loadPNG(dir .. name .. 'c.png');
+
   local sz = self.imageSize
   imgs = Transforms.Scale(sz, sz)[2](imgs)
   imgs = Transforms.Apply(augs, imgs)

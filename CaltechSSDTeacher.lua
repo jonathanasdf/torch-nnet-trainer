@@ -65,7 +65,7 @@ function M:forward(pathNames, inputs, deterministic)
 end
 
 function M:train()
-  error('Cannot train RPNProvider.')
+  error('Cannot train CaltechSSDTeacher.')
 end
 
 function M:updateStats(pathNames, outputs, labels) end

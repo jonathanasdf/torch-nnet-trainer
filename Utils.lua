@@ -21,6 +21,7 @@ function defineTrainingOptions(cmd)
   cmd:option('-valBatchSize', -1, 'batch size for validation')
   cmd:option('-valSize', -1, 'num batches to validate. -1 means run all available data once')
   cmd:option('-valEvery', 1, 'run validation every n epochs')
+  cmd:option('-valLossMultiplier', 1, 'multiply val loss by this')
   cmd:option('-optimState', '', 'optimState to resume from')
 end
 
@@ -85,7 +86,6 @@ function processArgs(cmd)
     gnuplot.ylabel('loss')
     gnuplot.grid(true)
   else
-    logprint = function() end
     for k,v in pairs(opts) do
       print(k, v)
     end

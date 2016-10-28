@@ -16,7 +16,7 @@ function M:preprocess(path, augmentations)
 end
 
 function M:getLabels(pathNames, outputs)
-  local basepath = '/file1/teacheroutputs/'
+  local basepath = '/file1/caltech10x/teacheroutputs/'
   local out = {}
   for i=1,#pathNames do
     local name = paths.basename(pathNames[i], '.png')
@@ -25,9 +25,9 @@ function M:getLabels(pathNames, outputs)
       file = file .. 'fc'
     end
     file = file .. '.t7'
-    out[#out+1] = torch.load(file)
+    out[#out+1] = torch.load(file):view(1, -1)
   end
-  return torch.cat(out)
+  return torch.cat(out, 1)
 end
 
 function M:forward(pathNames, inputs, deterministic)
@@ -35,7 +35,7 @@ function M:forward(pathNames, inputs, deterministic)
 end
 
 function M:train()
-  error('Cannot train RPNProvider.')
+  error('Cannot train CaltechTeacher.')
 end
 
 function M:updateStats(pathNames, outputs, labels) end
