@@ -16,13 +16,19 @@ cmd:option('-teacherMatchLayer', -1, 'which teacher layer to match, counting fro
 cmd:option('-copyTeacherLayers', false, 'whether to copy teacher layers after the matchLayer')
 cmd:option('-useMSE', false, 'use mean squared error instead of soft cross entropy')
 cmd:option('-T', 2, 'temperature for soft cross entropy')
-cmd:option('-lambda', 0.5, 'hard target relative weight')
+cmd:option('-lambda', '1;0.5', 'hard target relative weight')
 cmd:option('-dropoutBayes', 1, 'forward multiple time to achieve dropout as Bayesian approximation')
 cmd:option('-useCOV', false, 'use Vishnu\'s covariance weighted error when using dropoutBayes')
 processArgs(cmd)
 
 if opts.nGPU > 1 then
   error('TrainStudentModel can only use nGPU = 1.')
+end
+
+opts.lambda = opts.lambda:split(';')
+assert(#opts.lambda == 2)
+for i=1,#opts.lambda do
+  opts.lambda[i] = tonumber(opts.lambda[i])
 end
 
 local teacher = Model(opts.teacher)
@@ -116,32 +122,35 @@ local function train(pathNames)
   end
 
   local loss, softGradOutputs = teacher.processor:getStudentLoss(student, studentLayerOutputs, teacherLayerOutputs)
+  loss = loss * opts.lambda[1]
   if opts.dropoutBayes > 1 and not opts.useCOV then
     softGradOutputs = torch.cdiv(softGradOutputs, variance)
   end
   if type(softGradOutputs) == 'table' then
     for i=1,#softGradOutputs do
-      softGradOutputs[i] = softGradOutputs[i] / opts.batchCount
+      softGradOutputs[i] = softGradOutputs[i] * opts.lambda[1] / opts.batchCount
     end
   else
-    softGradOutputs = softGradOutputs / opts.batchCount
+    softGradOutputs = softGradOutputs * opts.lambda[1] / opts.batchCount
   end
   student.processor:backward(studentInputs, softGradOutputs, studentLayer)
 
   -- Hard labels
   local labels = student.processor:getLabels(pathNames, studentOutputs)
 
-  if student.processor.criterion and opts.lambda ~= 0 then
+  if student.processor.criterion and opts.lambda[2] ~= 0 then
     local hardLoss, hardGradOutputs = student.processor:getLoss(studentOutputs, labels)
-    loss = loss + hardLoss * opts.lambda
+    hardLoss = hardLoss * opts.lambda[2]
     if type(hardGradOutputs) == 'table' then
       for i=1,#hardGradOutputs do
-        hardGradOutputs[i] = hardGradOutputs[i] * opts.lambda / opts.batchCount
+        hardGradOutputs[i] = hardGradOutputs[i] * opts.lambda[2] / opts.batchCount
       end
     else
-      hardGradOutputs = hardGradOutputs * opts.lambda / opts.batchCount
+      hardGradOutputs = hardGradOutputs * opts.lambda[2] / opts.batchCount
     end
     student.processor:backward(studentInputs, hardGradOutputs)
+    --print(loss, hardLoss, math.sqrt(torch.cmul(softGradOutputs, softGradOutputs):sum()), math.sqrt(torch.cmul(hardGradOutputs, hardGradOutputs):sum()))
+    loss = loss + hardLoss
   end
 
   student.processor:updateStats(pathNames, studentOutputs, labels)

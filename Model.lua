@@ -244,7 +244,7 @@ function M:train(trainFn, valFn)
                valFn,
                bind(self.accValResults, self))
       self.loss = self.loss / self.count
-      self.valLoss[epoch] = self.loss * opts.valLossMultiplier
+      self.valLoss[epoch] = self.loss * (1+opts.valLossMultiplier)
       print(string.format('  Validation loss: %.6f', self.valLoss[epoch]))
       print(self.processor:getStats())
       print()
