@@ -11,7 +11,8 @@ cmd:argument('-output', 'path to save trained student model')
 defineBaseOptions(cmd)      -- defined in Utils.lua
 defineTrainingOptions(cmd)  -- defined in Utils.lua
 cmd:option('-useSameInputs', false, 'the teacher and student use the same inputs, so no need to load it twice')
-cmd:option('-matchLayer', 2, 'which layers to match outputs, counting from the end. Defaults to second last layer (i.e. input to SoftMax layer)')
+cmd:option('-matchLayer', 1, 'which layers to match outputs, counting from the end. Defaults to last layer')
+cmd:option('-teacherMatchLayer', -1, 'which teacher layer to match, counting from the end. Defaults to -1 which means use matchLayer')
 cmd:option('-copyTeacherLayers', false, 'whether to copy teacher layers after the matchLayer')
 cmd:option('-useMSE', false, 'use mean squared error instead of soft cross entropy')
 cmd:option('-T', 2, 'temperature for soft cross entropy')
@@ -33,11 +34,14 @@ while #studentContainer.modules == 1 and studentContainer.modules[1].modules do
 end
 local studentLayer = #studentContainer.modules - opts.matchLayer + 1
 
+if opts.teacherMatchLayer == -1 then
+  opts.teacherMatchLayer = opts.matchLayer
+end
 local teacherContainer = teacher
 while #teacherContainer.modules == 1 and teacherContainer.modules[1].modules do
   teacherContainer = teacherContainer.modules[1]
 end
-local teacherLayer = math.max(1, #teacherContainer.modules - opts.matchLayer + 1)
+local teacherLayer = math.max(1, #teacherContainer.modules - opts.teacherMatchLayer + 1)
 
 if opts.copyTeacherLayers then
   for i=studentLayer+1,#studentContainer.modules do
