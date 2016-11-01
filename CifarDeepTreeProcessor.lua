@@ -76,6 +76,7 @@ end
 
 function M:getStats()
   local s = CifarProcessor.getStats(self)
+
   local r = 'Leaf probabilities per class:'
   for i=1,#self.leafSum do
     r = r .. '\n' .. tostring(i) .. ':'
@@ -83,7 +84,27 @@ function M:getStats()
       r = r .. ' ' .. tostring(math.floor((self.leafSum[i][j]/self.classCounts[i])*10000+0.5)/100)
     end
   end
-  return r
+
+  if opts.phase == 'train' then
+    -- end of epoch, toggle frozen layers
+    if opts.epoch % 2 == 1 then
+      for k,v in pairs(self.model.modules[1].convs) do
+        v.accGradInputs = self.model.modules[1].convGrads
+      end
+      for k,v in pairs(self.model.modules[1].splits) do
+        v.accGradInputs = function() end
+      end
+    else
+      for k,v in pairs(self.model.modules[1].convs) do
+        v.accGradInputs = function() end
+      end
+      for k,v in pairs(self.model.modules[1].splits) do
+        v.accGradInputs = self.model.modules[1].splitGrads
+      end
+    end
+  end
+
+  return s .. '\n' .. r
 end
 
 return M

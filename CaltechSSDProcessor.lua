@@ -40,8 +40,7 @@ function M:__init(model, processorOpts)
   self.criterion.sizeAverage = false
 end
 
-function M:prepareBoxes()
-end
+function M:prepareBoxes() end
 
 function M:preprocess(path, augmentations)
   local img = image.load(path, 3)
@@ -111,12 +110,18 @@ function M:printBoxes(pathNames, values)
       for j=1,n do
         if self.model.output[1][(i-1)*n+j][2] > self.model.output[1][(i-1)*n+j][1] then
           local box = self.boxes[j] + self.model.output[2][i][j]
-          file:write(box[1]-box[3]/2, ' ', box[2]-box[4]/2, ' ', box[3], ' ', box[4], ' ', self.model.output[1][(i-1)*n+j][2], '\n')
+          file:write(string.format("%f %f %f %f %f\n", box[1]-box[3]/2, box[2]-box[4]/2, box[3], box[4], self.model.output[1][(i-1)*n+j][2]))
         end
       end
       file:close()
     end
   end
+end
+
+function M:test(pathNames)
+  local loss, total = Processor.test(self, pathNames)
+  self:printBoxes(pathNames, nil)
+  return loss, total
 end
 
 return M

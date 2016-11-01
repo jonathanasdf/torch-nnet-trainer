@@ -1,7 +1,6 @@
 package.path = package.path .. ';/home/jshen/scripts/?.lua'
 
 require 'Model'
-require 'Utils'
 
 local cmd = torch.CmdLine()
 cmd:argument('-teacher', 'teacher model to load')
@@ -17,8 +16,7 @@ cmd:option('-copyTeacherLayers', false, 'whether to copy teacher layers after th
 cmd:option('-useMSE', false, 'use mean squared error instead of soft cross entropy')
 cmd:option('-T', 2, 'temperature for soft cross entropy')
 cmd:option('-lambda', '1;0.5', 'hard target relative weight')
-cmd:option('-dropoutBayes', 1, 'forward multiple time to achieve dropout as Bayesian approximation')
-cmd:option('-useCOV', false, 'use Vishnu\'s covariance weighted error when using dropoutBayes')
+cmd:option('-dropoutBayes', 1, 'forward multiple time to formulate dropout as Bayesian approximation')
 processArgs(cmd)
 
 if opts.nGPU > 1 then
@@ -67,12 +65,12 @@ local function train(pathNames)
     teacherInputs = teacher.processor:loadAndPreprocessInputs(pathNames, augmentations)
   end
 
-  local teacherLayerOutputs, outputs, variance=1
+  local teacherLayerOutputs
   if opts.dropoutBayes > 1 then
     teacher.processor:forward(pathNames, teacherInputs)
     local mean = teacherContainer:get(teacherLayer).output
     local sumsqr = torch.cmul(mean, mean)
-    outputs = mean.new(opts.dropoutBayes, mean:size(1), mean:size(2))
+    local outputs = mean.new(opts.dropoutBayes, mean:size(1), mean:size(2))
     outputs[1] = mean
 
     local start
@@ -82,9 +80,7 @@ local function train(pathNames)
         break
       end
     end
-    if start == nil then
-      start = teacherLayer
-    end
+    if start == nil then start = teacherLayer end
     local out_init = teacherContainer:get(start).output
     for i=2,opts.dropoutBayes do
       local out = out_init
@@ -95,11 +91,19 @@ local function train(pathNames)
       sumsqr = sumsqr + torch.cmul(out, out)
       outputs[i] = out
     end
-    sumsqr = sumsqr / opts.dropoutBayes
     mean = mean / opts.dropoutBayes
-    variance = sumsqr - torch.cmul(mean, mean)
-    variance = torch.cinv(torch.exp(-variance) + 1)*2 - 0.5  --pass into sigmoid function
+    sumsqr = sumsqr / opts.dropoutBayes
     teacherLayerOutputs = mean
+
+    local cov = mean.new(mean:size(1), mean:size(2), mean:size(2)):zero()
+    for i=1,teacherLayerOutputs:size(1) do
+      for j=1,opts.dropoutBayes do
+        local diff = (outputs[j][i] - teacherLayerOutputs[i]):view(-1, 1)
+        cov[i] = cov[i] + diff*diff:t()
+      end
+      cov[i] = cov[i] / (opts.dropoutBayes - 1)
+    end
+    softCriterion:setCov(cov)
   else
     teacher.processor:forward(pathNames, teacherInputs, true)
     teacherLayerOutputs = teacherContainer:get(teacherLayer).output
@@ -107,25 +111,8 @@ local function train(pathNames)
 
   local studentOutputs = student.processor:forward(pathNames, studentInputs)
   local studentLayerOutputs = studentContainer:get(studentLayer).output
-
-  if opts.useCOV then
-    error('useCOV is broken right now.')
-    local cov = teacherLayerOutputs.new(teacherLayerOutputs:size(1), teacherLayerOutputs:size(2), teacherLayerOutputs:size(2)):zero()
-    for i=1,teacherLayerOutputs:size(1) do
-      for j=1,opts.dropoutBayes do
-        local diff = (outputs[j][i] - teacherLayerOutputs[i]):view(-1, 1)
-        cov[i] = cov[i] + diff * diff:t()
-      end
-      cov[i] = (cov[i] / (opts.dropoutBayes - 1)):inverse()
-    end
-    softCriterion.invcov = cov
-  end
-
   local loss, softGradOutputs = teacher.processor:getStudentLoss(student, studentLayerOutputs, teacherLayerOutputs)
   loss = loss * opts.lambda[1]
-  if opts.dropoutBayes > 1 and not opts.useCOV then
-    softGradOutputs = torch.cdiv(softGradOutputs, variance)
-  end
   if type(softGradOutputs) == 'table' then
     for i=1,#softGradOutputs do
       softGradOutputs[i] = softGradOutputs[i] * opts.lambda[1] / opts.batchCount
@@ -138,7 +125,7 @@ local function train(pathNames)
   -- Hard labels
   local labels = student.processor:getLabels(pathNames, studentOutputs)
 
-  if student.processor.criterion and opts.lambda[2] ~= 0 then
+  if opts.lambda[2] ~= 0 then
     local hardLoss, hardGradOutputs = student.processor:getLoss(studentOutputs, labels)
     hardLoss = hardLoss * opts.lambda[2]
     if type(hardGradOutputs) == 'table' then

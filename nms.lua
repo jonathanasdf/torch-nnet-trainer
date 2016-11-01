@@ -50,3 +50,37 @@ function nmsCaltech(dir)
     end
   end
 end
+
+function nmsKITTI(dir)
+  for filename, attr in dirtree(dir) do
+    if attr.mode == 'file' and attr.size > 0 then
+      local lines = 0
+      for _ in io.lines(filename) do
+        lines = lines + 1
+      end
+      local classes = {}
+      local boxes = torch.FloatTensor(lines, 5)
+      lines = 0
+      for l in io.lines(filename) do
+        lines = lines + 1
+        local s = l:split(' ')
+        classes[lines] = s[1]
+        boxes[lines][1] = tonumber(s[2])
+        boxes[lines][2] = tonumber(s[3])
+        boxes[lines][3] = tonumber(s[4])
+        boxes[lines][4] = tonumber(s[5])
+        boxes[lines][5] = tonumber(s[6])
+      end
+      local indexes = nms(boxes[{{}, {1, 4}}], boxes[{{}, 5}], 0.5)
+
+      local file, err = io.open(filename, 'w')
+      if not(file) then error(err) end
+
+      for i=1, indexes:size(1) do
+        local box = boxes[indexes[i]]
+        file:write(classes[indexes[i]], ' ', box[1], ' ',  box[2], ' ', box[3], ' ', box[4], ' ', box[5], '\n')
+      end
+      file:close()
+    end
+  end
+end

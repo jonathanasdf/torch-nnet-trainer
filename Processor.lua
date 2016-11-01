@@ -108,11 +108,8 @@ end
 -- Only called by TrainStudentModel.lua
 function M:getStudentLoss(student, studentOutputs, teacherOutputs)
   if self.softCriterion == nil then
-    if opts.useCOV then
-      if opts.dropoutBayes == 1 then
-        error('useCOV requires dropoutBayes. Please set useMSE if not using dropout.')
-      end
-      self.softCriterion = nn.MSECovCriterion(false)
+    if opts.dropoutBayes > 1 then
+      self.softCriterion = nn.SquareMahalanobisCriterion(false)
     elseif opts.useMSE then
       self.softCriterion = nn.MSECriterion(false)
     else
