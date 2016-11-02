@@ -57,6 +57,17 @@ if opts.copyTeacherLayers then
   student.params, student.gradParams = student:getParameters()
 end
 
+if teacher.processor.softCriterion == nil then
+  if opts.dropoutBayes > 1 then
+    teacher.processor.softCriterion = nn.SquareMahalanobisCriterion(false)
+  elseif opts.useMSE then
+    teacher.processor.softCriterion = nn.MSECriterion(false)
+  else
+    teacher.processor.softCriterion = nn.SoftCrossEntropyCriterion(opts.T, false)
+  end
+end
+teacher.processor.softCriterion = teacher.processor.softCriterion:cuda()
+
 local function train(pathNames)
   local studentInputs, augmentations = student.processor:loadAndPreprocessInputs(pathNames)
 
@@ -103,7 +114,7 @@ local function train(pathNames)
       end
       cov[i] = cov[i] / (opts.dropoutBayes - 1)
     end
-    softCriterion:setCov(cov)
+    teacher.processor.softCriterion:setCov(cov)
   else
     teacher.processor:forward(pathNames, teacherInputs, true)
     teacherLayerOutputs = teacherContainer:get(teacherLayer).output

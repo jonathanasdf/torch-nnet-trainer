@@ -107,17 +107,6 @@ end
 
 -- Only called by TrainStudentModel.lua
 function M:getStudentLoss(student, studentOutputs, teacherOutputs)
-  if self.softCriterion == nil then
-    if opts.dropoutBayes > 1 then
-      self.softCriterion = nn.SquareMahalanobisCriterion(false)
-    elseif opts.useMSE then
-      self.softCriterion = nn.MSECriterion(false)
-    else
-      self.softCriterion = nn.SoftCrossEntropyCriterion(opts.T, false)
-    end
-    self.softCriterion = self.softCriterion:cuda()
-  end
-
   local criterion = self.criterion
   self.criterion = self.softCriterion
   local loss, gradOutputs = M.getLoss(self, studentOutputs, teacherOutputs)

@@ -86,9 +86,7 @@ function processArgs(cmd)
     gnuplot.ylabel('loss')
     gnuplot.grid(true)
   else
-    for k,v in pairs(opts) do
-      print(k, v)
-    end
+    tprint(opts)
   end
 end
 
@@ -103,18 +101,6 @@ function requirePath(path)
   local M = require(paths.basename(path, 'lua'))
   package.path = oldPackagePath
   return M
-end
-
-function tformat(tbl, indent)
-  if not indent then indent = 0 end
-  for k, v in pairs(tbl) do
-    formatting = string.rep("  ", indent) .. k .. ": "
-    if type(v) == "table" then
-      return formatting .. '\n' .. tformat(v, indent+1)
-    else
-      return formatting .. tostring(v)
-    end
-  end
 end
 
 function tablelength(T)

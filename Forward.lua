@@ -1,6 +1,5 @@
 package.path = package.path .. ';/home/jshen/scripts/?.lua'
 
-require 'DataLoader'
 require 'Model'
 
 local cmd = torch.CmdLine()
