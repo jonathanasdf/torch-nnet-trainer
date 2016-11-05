@@ -22,6 +22,9 @@ processArgs(cmd)
 if opts.nGPU > 1 then
   error('TrainStudentModel can only use nGPU = 1.')
 end
+if opts.useMSE and opts.dropoutBayes > 1 then
+  error('Both useMSE and dropoutBayes specified!')
+end
 
 opts.lambda = opts.lambda:split(';')
 assert(#opts.lambda == 2)
@@ -59,7 +62,7 @@ end
 
 if teacher.processor.softCriterion == nil then
   if opts.dropoutBayes > 1 then
-    teacher.processor.softCriterion = nn.SquareMahalanobisCriterion(false)
+    teacher.processor.softCriterion = nn.MahalanobisCriterion(false)
   elseif opts.useMSE then
     teacher.processor.softCriterion = nn.MSECriterion(false)
   else
@@ -107,9 +110,9 @@ local function train(pathNames)
     teacherLayerOutputs = mean
 
     local cov = mean.new(mean:size(1), mean:size(2), mean:size(2)):zero()
-    for i=1,teacherLayerOutputs:size(1) do
+    for i=1,mean:size(1) do
       for j=1,opts.dropoutBayes do
-        local diff = (outputs[j][i] - teacherLayerOutputs[i]):view(-1, 1)
+        local diff = (outputs[j][i] - mean[i]):view(-1, 1)
         cov[i] = cov[i] + diff*diff:t()
       end
       cov[i] = cov[i] / (opts.dropoutBayes - 1)

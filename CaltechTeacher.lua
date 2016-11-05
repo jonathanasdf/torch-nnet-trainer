@@ -16,7 +16,7 @@ function M:preprocess(path, augmentations)
 end
 
 function M:getLabels(pathNames, outputs)
-  local basepath = '/file1/caltech10x/teacheroutputs/'
+  local basepath = '/file1/caltech10x/teacheroutputs32/'
   local out = {}
   for i=1,#pathNames do
     local name = paths.basename(pathNames[i], '.png')
