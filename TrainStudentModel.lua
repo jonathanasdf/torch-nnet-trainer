@@ -79,9 +79,9 @@ local function train(pathNames)
     teacherInputs = teacher.processor:loadAndPreprocessInputs(pathNames, augmentations)
   end
 
-  local teacherLayerOutputs
+  local teacherOutputs, teacherLayerOutputs
   if opts.dropoutBayes > 1 then
-    teacher.processor:forward(pathNames, teacherInputs)
+    teacherOutputs = teacher.processor:forward(pathNames, teacherInputs)
     local mean = teacherContainer:get(teacherLayer).output
     local sumsqr = torch.cmul(mean, mean)
     local outputs = mean.new(opts.dropoutBayes, mean:size(1), mean:size(2))
@@ -119,7 +119,7 @@ local function train(pathNames)
     end
     teacher.processor.softCriterion:setCov(cov)
   else
-    teacher.processor:forward(pathNames, teacherInputs, true)
+    teacherOutputs = teacher.processor:forward(pathNames, teacherInputs, true)
     teacherLayerOutputs = teacherContainer:get(teacherLayer).output
   end
 

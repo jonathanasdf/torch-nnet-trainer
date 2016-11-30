@@ -284,7 +284,6 @@ function M:getStats()
       gnuplot.plotflush()
     end
   end
-
   return tostring(self.stats)
 end
 
