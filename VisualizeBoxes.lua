@@ -26,7 +26,7 @@ if lines > 0 then
 
   for i=1,boxes:size(1) do
     if boxes[i][5] >= opts.threshold then
-      image.drawRect(img, boxes[i][1], boxes[i][2], boxes[i][3], boxes[i][4], {inplace = true})
+      image.drawRect(img, boxes[i][1], boxes[i][2], boxes[i][3], boxes[i][4], {lineWidth = 3, inplace = true})
     end
   end
   image.save(opts.output, img)

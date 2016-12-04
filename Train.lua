@@ -11,5 +11,5 @@ defineTrainingOptions(cmd)  -- defined in Utils.lua
 processArgs(cmd)
 
 local model = Model(opts.model)
-model:train()
+model:Train()
 print("Done!\n")
