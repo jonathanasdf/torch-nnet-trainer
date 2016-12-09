@@ -1,4 +1,4 @@
 change Transform to return parameters not functions so it can be multithreaded
-use TorchNet for data loading
+use TorchNet for data loading and somehow improve ugly Transforms/augmentations hack
 Count flops
 Allow for customization of sgd strategy

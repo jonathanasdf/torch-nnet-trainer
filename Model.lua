@@ -81,7 +81,9 @@ function M:load(path, modelOpts)
     print('Loading model from file: ' .. path)
     self.module = loadSavedModel(path)
   end
-  self.module = makeDataParallelTable(self.module, opts.nGPU)
+  if torch.type(self.module) ~= 'nn.DataParallelTable' then
+    self.module = makeDataParallelTable(self.module, opts.nGPU)
+  end
 end
 
 function M:save(filename)

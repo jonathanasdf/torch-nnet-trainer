@@ -1,228 +1,249 @@
-require 'nms'
 local Transforms = require 'Transforms'
 local Processor = require 'Processor'
 local M = torch.class('KITTIProcessor', 'Processor')
 
 function M:__init(model, processorOpts)
   self.cmd:option('-imageSize', 224, 'input patch size')
-  self.cmd:option('-classWeights', '1;1;1', 'relative weight of neg;pedestrian;cyclist')
-  self.cmd:option('-drawROC', '', 'set a directory to use for full evaluation')
-  self.cmd:option('-boxes', '', 'file name to bounding box mapping for drawROC')
-  self.cmd:option('-nonms', false, 'dont apply nms to boxes for drawROC')
+  self.cmd:option('-beta', 1, 'weight for quaternion loss')
+  self.cmd:option('-saveOutput', '', 'directory to write output poses')
   Processor.__init(self, model, processorOpts)
 
+  self.images = {}
   self.meanPixel = torch.Tensor{0.485, 0.456, 0.406}:view(3, 1, 1)
   self.std = torch.Tensor{0.229, 0.224, 0.225}:view(3, 1, 1)
-
-  self.classWeights = self.classWeights:split(';')
-  for i=1,#self.classWeights do
-    self.classWeights[i] = tonumber(self.classWeights[i])
+  self.gt = torch.load('/file1/kitti_odom/dataset/poses/ground_truth.t7')
+  for k,v in pairs(self.gt) do
+    local t = v.new(v:size(1), 4, 4)
+    t[{{}, {1,3}, {}}] = torch.view(v, -1, 3, 4)
+    t[{{}, 4, {}}] = torch.repeatTensor(v.new{0, 0, 0, 1}:view(1, 1, 4), v:size(1), 1, 1)
+    self.gt[k] = t:cuda()
+    self.images[k] = {}
   end
-  self.criterion = nn.CrossEntropyCriterion(torch.Tensor(self.classWeights), false):cuda()
 
-  self.softmax = nn.SoftMax():cuda()
+  self.criterion = nn.ParallelCriterion()
+  self.criterion:add(nn.MSECriterion(false), self.beta)
+  self.criterion:add(nn.MSECriterion(false))
+  self.criterion.sizeAverage = false
+  self.criterion:cuda()
 
-  if self.drawROC ~= '' then
-    if string.sub(self.drawROC, -1) ~= '/' then
-        self.drawROC = self.drawROC .. '/'
+  if self.saveOutput ~= '' then
+    if opts.phase == 'test' and opts.epochSize ~= -1 then
+      error('saveOutput can only be used with epochSize == -1')
+    elseif opts.phase == 'val' and opts.valSize ~= -1 then
+      error('saveOutput can only be used with valSize == -1')
     end
-    self:initDrawROC()
+    if string.sub(self.saveOutput, -1) ~= '/' then
+      self.saveOutput = self.saveOutput .. '/'
+    end
+    self.results = {}
   end
 
   if opts.logdir and opts.epochs then
-    self.trainGraph = gnuplot.pngfigure(opts.logdir .. 'train.png')
+    self.rGraph = gnuplot.pngfigure(opts.logdir .. 'r.png')
     gnuplot.xlabel('epoch')
-    gnuplot.ylabel('acc')
+    gnuplot.ylabel('MSE')
     gnuplot.grid(true)
-    self.trainPosAcc = torch.Tensor(opts.epochs)
-    self.trainNegAcc = torch.Tensor(opts.epochs)
-    self.trainAcc = torch.Tensor(opts.epochs)
-
+    self.rTrain = torch.Tensor(opts.epochs)
     if opts.val then
-      self.valGraph = gnuplot.pngfigure(opts.logdir .. 'val.png')
-      gnuplot.xlabel('epoch')
-      gnuplot.ylabel('acc')
-      gnuplot.grid(true)
-      self.valPosAcc = torch.Tensor(opts.epochs)
-      self.valNegAcc = torch.Tensor(opts.epochs)
-      self.valAcc = torch.Tensor(opts.epochs)
+      self.rVal = torch.Tensor(opts.epochs)
+    end
 
-      if self.drawROC ~= '' then
-        self.valROCGraph = gnuplot.pngfigure(opts.logdir .. 'val-logavgmiss.png')
-        gnuplot.xlabel('epoch')
-        gnuplot.ylabel('log-average miss rate')
-        gnuplot.grid(true)
-        self.valROC = torch.Tensor(opts.epochs)
-      end
+    self.tGraph = gnuplot.pngfigure(opts.logdir .. 't.png')
+    gnuplot.xlabel('epoch')
+    gnuplot.ylabel('MSE')
+    gnuplot.grid(true)
+    self.tTrain = torch.Tensor(opts.epochs)
+    if opts.val then
+      self.tVal = torch.Tensor(opts.epochs)
     end
   end
-end
-
-function M:initDrawROC()
-  if string.sub(self.drawROC, 1, 1) ~= '/' then
-      self.drawROC = paths.concat(paths.cwd(), self.drawROC)
-  end
-
-  if opts.phase == 'test' then
-    if opts.epochSize ~= -1 then
-      error('drawROC can only be used with epochSize == -1')
-    end
-  else -- val
-    if opts.val == '' then
-      error('drawROC specified without validation data?')
-    end
-    if opts.valSize ~= -1 then
-      error('drawROC can only be used with valSize == -1')
-    end
-  end
-
-  if not(opts.resume) or opts.resume == '' then
-    if paths.dir(self.drawROC) ~= nil then
-      local answer
-      repeat
-        print('Warning: drawROC directory exists! Continue (y/n)?')
-        answer=io.read()
-      until answer=="y" or answer=="n"
-      if answer == "n" then
-        error('drawROC directory exists! Aborting.')
-      end
-    else
-      mkdir(self.drawROC)
-    end
-  end
-
-  if self.boxes == '' then
-    error('Please specify boxes file. Example: /home/nvesdapu/box.txt')
-  end
-  local boxes = {}
-  for l in io.lines(self.boxes) do
-    local s = l:split(' ')
-    boxes[s[1]] = {s[2], s[3], s[4], s[5]}
-  end
-  self.boxes = boxes
 end
 
 function M:preprocess(path, augmentations)
-  local img = image.load(path, 3)
-  local sz = self.imageSize
-  img = Transforms.Scale(sz, sz)[2](img)
-  img = img:csub(self.meanPixel:expandAs(img)):cdiv(self.std:expandAs(img))
-  return img:cuda(), {}
+  local base = paths.dirname(paths.dirname(path))
+  local seq = base:sub(-2)
+  local id = tonumber(path:sub(-10, -5))
+
+  if self.images[seq][id] == nil then
+    local path = string.format('%06d', id-1) .. '.png'
+    local img = torch.cat({
+      image.load(base .. '/image_2/' .. path, 3),
+      image.load(base .. '/image_3/' .. path, 3)}, 1)
+    local sz = self.imageSize
+    img = Transforms.Scale(sz, sz)[2](img)
+    img = img:csub(torch.repeatTensor(self.meanPixel, 2, 1, 1):expandAs(img))
+             :cdiv(torch.repeatTensor(self.std, 2, 1, 1):expandAs(img))
+    self.images[seq][id] = img
+  end
+
+  if self.images[seq][id+1] == nil then
+    local path = string.format('%06d', id) .. '.png'
+    local img = torch.cat({
+      image.load(base .. '/image_2/' .. path, 3),
+      image.load(base .. '/image_3/' .. path, 3)}, 1)
+    local sz = self.imageSize
+    img = Transforms.Scale(sz, sz)[2](img)
+    img = img:csub(torch.repeatTensor(self.meanPixel, 2, 1, 1):expandAs(img))
+             :cdiv(torch.repeatTensor(self.std, 2, 1, 1):expandAs(img))
+    self.images[seq][id+1] = img
+  end
+
+  local input = torch.cat({self.images[seq][id], self.images[seq][id+1]}, 1)
+  return input:cuda(), {}
+end
+
+local function getQuaternion(pose)
+  local r = pose:view(4, 4)
+  local q = torch.Tensor(4) -- {w, x, y, z}
+  local trace = r[1][1] + r[2][2] + r[3][3]
+  if trace > 0 then
+    S = math.sqrt(trace + 1) * 2 -- S=4*q[1]
+    q[1] = 0.25 * S
+    q[2] = (r[3][2] - r[2][3]) / S
+    q[3] = (r[1][3] - r[3][1]) / S
+    q[4] = (r[2][1] - r[1][2]) / S
+  elseif (r[1][1] > r[2][2]) and (r[1][1] > r[3][3]) then
+    S = math.sqrt(1 + r[1][1] - r[2][2] - r[3][3]) * 2 -- S=4*q[2]
+    q[1] = (r[3][2] - r[2][3]) / S
+    q[2] = 0.25 * S
+    q[3] = (r[1][2] + r[2][1]) / S
+    q[4] = (r[1][3] + r[3][1]) / S
+  elseif (r[2][2] > r[3][3]) then
+    S = math.sqrt(1 + r[2][2] - r[1][1] - r[3][3]) * 2 -- S=4*q[3]
+    q[1] = (r[1][3] - r[3][1]) / S
+    q[2] = (r[1][2] + r[2][1]) / S
+    q[3] = 0.25 * S
+    q[4] = (r[2][3] + r[3][2]) / S
+  else
+    S = math.sqrt(1.0 + r[3][3] - r[1][1] - r[2][2]) * 2 -- S=4*q[4]
+    q[1] = (r[2][1] - r[1][2]) / S
+    q[2] = (r[1][3] + r[3][1]) / S
+    q[3] = (r[2][3] + r[3][2]) / S
+    q[4] = 0.25 * S
+  end
+  return q
 end
 
 function M:getLabels(pathNames, outputs)
-  local labels = torch.Tensor(#pathNames)
+  local r = outputs[1].new(#pathNames, 4)
+  local t = outputs[1].new(#pathNames, 3)
   for i=1,#pathNames do
-    if pathNames[i]:find('cyclist') then
-      labels[i] = 3
-    else
-      labels[i] = pathNames[i]:find('neg') and 1 or 2
-    end
+    local path = pathNames[i]
+    local seq = paths.dirname(paths.dirname(path)):sub(-2)
+    local id = tonumber(path:sub(-10, -5))
+    local cur = self.gt[seq][id+1]
+    local prev = self.gt[seq][id]
+    local diff = torch.mm(cur, torch.inverse(prev))
+    r[i] = getQuaternion(diff)
+    t[i] = diff[{{1,3}, 4}]
   end
-  return labels:cuda()
+  return {r, t}
 end
 
 function M:resetStats()
-  self.stats = optim.ConfusionMatrix({'no person', 'person', 'cyclist'})
-  if self.drawROC ~= '' then
-    os.execute('rm -rf ' .. self.drawROC)
-    os.execute('mkdir -p ' .. self.drawROC)
+  self.count = 0
+  self.rloss = 0
+  self.tloss = 0
+  if self.saveOutput ~= '' then
+    os.execute('rm -rf ' .. self.saveOutput)
+    os.execute('mkdir -p ' .. self.saveOutput)
   end
+end
+
+local function getPose(q, t)
+  q = q / q:norm()
+  local qx = q[2] + q[2]
+  local qy = q[3] + q[3]
+  local qz = q[4] + q[4]
+  local qwx = qx * q[1]
+  local qwy = qy * q[1]
+  local qwz = qz * q[1]
+  local qxx = qx * q[2]
+  local qxy = qy * q[2]
+  local qxz = qz * q[2]
+  local qyy = qy * q[3]
+  local qyz = qz * q[3]
+  local qzz = qz * q[4]
+  return q.new{
+    {1 - (qyy + qzz), qxy - qwz, qxz + qwy, t[1]},
+    {qxy + qwz, 1 - (qxx + qzz), qyz - qwx, t[2]},
+    {qxz - qwy, qyz + qwx, 1 - (qxx + qyy), t[3]},
+    {0, 0, 0, 1}}
 end
 
 function M:updateStats(pathNames, outputs, labels)
-  self.stats:batchAdd(outputs, labels)
+  self.count = self.count + #pathNames
+  self.rloss = self.rloss + self.criterion.criterions[1].output * self.criterion.weights[1]
+  self.tloss = self.tloss + self.criterion.criterions[2].output * self.criterion.weights[2]
+  if self.rloss ~= self.rloss or self.tloss ~= self.tloss then
+    print("ERROR: NaN in loss!")
+  end
+
+  if self.saveOutput ~= '' then
+    for i=1,#pathNames do
+      local path = pathNames[i]
+      local seq = paths.dirname(paths.dirname(path)):sub(-2)
+      local id = tonumber(path:sub(-10, -5))
+      if self.results[seq] == nil then
+        self.results[seq] = outputs[1].new(self.gt[seq]:size(1), 4, 4)
+        self.results[seq][1] = outputs[1].new{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}}
+      end
+      self.results[seq][id+1] = getPose(outputs[1][i], outputs[2][i])
+    end
+  end
 end
 
 function M:getStats()
-  local ROC
-  if opts.phase ~= 'train' then
-    if self.drawROC ~= '' then
-      print("Printing boxes...")
-      if self.nonms then
-        -- remove duplicate boxes
-        local total = 0
-        for _, attr in dirtree(self.drawROC) do
-          if attr.mode == 'file' and attr.size > 0 then
-            total = total + 1
+  if self.saveOutput ~= '' then
+    for k,v in pairs(self.results) do
+      local f = io.open(self.saveOutput .. k .. '.txt', 'w')
+      for i=1,v:size(1) do
+        if i > 1 then
+          v[i] = torch.mm(v[i], v[i-1])
+        end
+        f:write(v[i][1][1])
+        for j=1,3 do
+          for k=1,4 do
+            if j ~= 1 or k ~= 1 then
+              f:write(' ' .. v[i][j][k])
+            end
           end
         end
-        local count = 0
-        for filename, attr in dirtree(self.drawROC) do
-          if attr.mode == 'file' and attr.size > 0 then
-            os.execute("gawk -i inplace '!a[$0]++' " .. filename)
-            count = count + 1
-            xlua.progress(count, total)
-          end
-        end
-      else
-        -- do nms
-        nmsKITTI(self.drawROC)
+        f:write('\n')
       end
-
-      print("Running MATLAB script...")
-      print(runMatlab("cd /home/nvesdapu; eval_KITTI('" .. self.drawROC .. "')"))
-      ROC = readAll(self.drawROC .. '/result.txt')
-      print(ROC)
+      f:close()
     end
   end
 
-  self.stats:updateValids()
-  if opts.phase == 'train' and self.trainGraph then
-    self.trainPosAcc[opts.epoch] = self.stats.valids[1]
-    self.trainNegAcc[opts.epoch] = self.stats.valids[2]
-    self.trainAcc[opts.epoch] = self.stats.averageValid
+  if self.rGraph then
+    if opts.phase == 'train' then
+      self.rTrain[opts.epoch] = self.rloss / self.count
+      self.tTrain[opts.epoch] = self.tloss / self.count
 
-    local x = torch.range(1, opts.epoch):long()
-    gnuplot.figure(self.trainGraph)
-    gnuplot.plot({'pos', x, self.trainPosAcc:index(1, x), '+-'}, {'neg', x, self.trainNegAcc:index(1, x), '+-'}, {'overall', x, self.trainAcc:index(1, x), '-'})
-    gnuplot.plotflush()
-  elseif opts.phase == 'val' and opts.epoch >= opts.valEvery then
-    if self.valGraph then
-      self.valPosAcc[opts.epoch] = self.stats.valids[1]
-      self.valNegAcc[opts.epoch] = self.stats.valids[2]
-      self.valAcc[opts.epoch] = self.stats.averageValid
-
-      local x = torch.range(opts.valEvery, opts.epoch, opts.valEvery):long()
-      gnuplot.figure(self.valGraph)
-      gnuplot.plot({'pos', x, self.valPosAcc:index(1, x), '+-'}, {'neg', x, self.valNegAcc:index(1, x), '+-'}, {'overall', x, self.valAcc:index(1, x), '-'})
+      gnuplot.figure(self.rGraph)
+      local x = torch.range(1, opts.epoch):long()
+      if self.rVal and opts.epoch-1 >= opts.valEvery then
+        local xval = torch.range(opts.valEvery, opts.epoch-1, opts.valEvery):long()
+        gnuplot.plot({'train', x, self.rTrain:index(1, x), '+-'},
+                     {'val', xval, self.rVal:index(1, xval), '+-'})
+      else
+        gnuplot.plot({'train', x, self.rTrain:index(1, x), '+-'})
+      end
       gnuplot.plotflush()
-    end
-    if self.valROCGraph then
-      self.valROC[opts.epoch] = tonumber(ROC)
+    elseif opts.phase == 'val' and opts.epoch >= opts.valEvery then
+      self.rVal[opts.epoch] = self.rloss / self.count
+      self.tVal[opts.epoch] = self.tloss / self.count
 
-      local x = torch.range(opts.valEvery, opts.epoch, opts.valEvery):long()
-      gnuplot.figure(self.valROCGraph)
-      gnuplot.plot({'result', x, self.valROC:index(1, x), '+-'})
+      gnuplot.figure(self.rGraph)
+      local x = torch.range(1, opts.epoch):long()
+      local xval = torch.range(opts.valEvery, opts.epoch, opts.valEvery):long()
+      gnuplot.plot({'train', x, self.rTrain:index(1, x), '+-'},
+                   {'val', xval, self.rVal:index(1, xval), '+-'})
       gnuplot.plotflush()
     end
   end
 
-  return tostring(self.stats)
-end
-
-function M:printBoxes(pathNames, values)
-  if self.drawROC ~= '' then
-    local classNames = {'DontCare', 'Pedestrian', 'DontCare'}
-    local _, class = torch.max(values, 2)
-    for i=1,#pathNames do
-      local path = pathNames[i]
-      local filename = self.drawROC .. string.sub(paths.basename(path), 1, 6) .. '.txt'
-      local file, err = io.open(filename, 'a')
-      if not(file) then error(err) end
-
-      local box = self.boxes[paths.basename(path)]
-      file:write(string.format("%s %f %f %f %f %f\n", classNames[class[i][1]], box[1], box[2], box[3], box[4], values[i][class[i][1]]))
-      file:close()
-    end
-  end
-end
-
-function M:test(pathNames)
-  local loss, total = Processor.test(self, pathNames)
-  local output = self.softmax:forward(self.model.output)
-  self:printBoxes(pathNames, output)
-  return loss, total
+  return string.format('Average rotation loss: %f translation loss: %f', self.rloss / self.count, self.tloss / self.count)
 end
 
 return M
