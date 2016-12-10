@@ -39,7 +39,7 @@ local initcheck = require 'argcheck'{
   {name='randomize',
    type='boolean',
    help='whether to shuffle all of the images once after reading them',
-   default=false}
+   default=true}
 }
 
 local DataLoader = torch.class('DataLoader')
@@ -104,8 +104,12 @@ function DataLoader:__init(...)
   end
   print(self.numSamples ..  ' images found.')
 
+  self:shuffle()
+end
+
+function DataLoader:shuffle()
   if self.randomize then
-    self.shuffle = torch.randperm(self:size())
+    self.perm = torch.randperm(self:size())
   end
 end
 
@@ -119,7 +123,7 @@ function DataLoader:retrieve(indices)
   local pathNames = {}
   for i=1,quantity do
     -- load the sample
-    local index = self.shuffle and self.shuffle[indices[i]] or indices[i]
+    local index = self.perm and self.perm[indices[i]] or indices[i]
     local j = 1
     while index > self:size(j) do
       index = index - self:size(j)

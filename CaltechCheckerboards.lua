@@ -8,7 +8,7 @@ function M:__init(model, processorOpts)
   CaltechProcessor.__init(self, model, processorOpts)
 end
 
-function M:preprocess(path, augmentations)
+function M:loadInput(path, augmentations)
   local augs = {}
   local dir = paths.dirname(paths.dirname(path)) .. '/chkt7/'
   local name = paths.basename(path, '.png')

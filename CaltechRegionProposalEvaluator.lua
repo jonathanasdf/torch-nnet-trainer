@@ -12,7 +12,7 @@ function M:__init(model, processorOpts)
   end
 end
 
-function M:preprocess()
+function M:loadInput()
   return torch.Tensor(1):cuda()
 end
 

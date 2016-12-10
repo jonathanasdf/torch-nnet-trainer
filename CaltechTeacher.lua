@@ -11,27 +11,25 @@ function M:getLoss(outputs, labels)
 end
 
 local t = torch.CudaTensor(1)
-function M:preprocess(path, augmentations)
+function M:loadInput(path, augmentations)
   return t, {}
 end
 
-function M:getLabels(pathNames, outputs)
+function M:getLabel(path)
   local basepath = '/file1/caltech10x/teacheroutputs32/'
-  local out = {}
-  for i=1,#pathNames do
-    local name = paths.basename(pathNames[i], '.png')
-    local file = basepath .. name
-    if self.fc then
-      file = file .. 'fc'
-    end
-    file = file .. '.t7'
-    out[#out+1] = torch.load(file):view(1, -1)
+  local out
+  local name = paths.basename(path, '.png')
+  local file = basepath .. name
+  if self.fc then
+    file = file .. 'fc'
   end
-  return torch.cat(out, 1)
+  file = file .. '.t7'
+  return torch.load(file):view(1, -1)
 end
 
 function M:forward(pathNames, inputs, deterministic)
-  return CaltechProcessor.forward(self, pathNames, self:getLabels(pathNames), deterministic)
+  local _, labels = self:loadAndPreprocessInputs(pathNames)
+  return CaltechProcessor.forward(self, pathNames, labels, deterministic)
 end
 
 function M:train()

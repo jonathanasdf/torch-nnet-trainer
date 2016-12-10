@@ -14,7 +14,7 @@ function M:__init(model, processorOpts)
   self.gt = torch.load('/file1/kitti_odom/dataset/poses/ground_truth.t7')
   for k,v in pairs(self.gt) do
     local t = v.new(v:size(1), 4, 4)
-    t[{{}, {1,3}, {}}] = torch.view(v, -1, 3, 4)
+    t[{{}, {1, 3}, {}}] = v:view(-1, 3, 4)
     t[{{}, 4, {}}] = torch.repeatTensor(v.new{0, 0, 0, 1}:view(1, 1, 4), v:size(1), 1, 1)
     self.gt[k] = t:cuda()
     self.images[k] = {}
@@ -59,11 +59,7 @@ function M:__init(model, processorOpts)
   end
 end
 
-function M:preprocess(path, augmentations)
-  local base = paths.dirname(paths.dirname(path))
-  local seq = base:sub(-2)
-  local id = tonumber(path:sub(-10, -5))
-
+function M:loadImage(base, seq, id)
   if self.images[seq][id] == nil then
     local path = string.format('%06d', id-1) .. '.png'
     local img = torch.cat({
@@ -75,26 +71,22 @@ function M:preprocess(path, augmentations)
              :cdiv(torch.repeatTensor(self.std, 2, 1, 1):expandAs(img))
     self.images[seq][id] = img
   end
+end
 
-  if self.images[seq][id+1] == nil then
-    local path = string.format('%06d', id) .. '.png'
-    local img = torch.cat({
-      image.load(base .. '/image_2/' .. path, 3),
-      image.load(base .. '/image_3/' .. path, 3)}, 1)
-    local sz = self.imageSize
-    img = Transforms.Scale(sz, sz)[2](img)
-    img = img:csub(torch.repeatTensor(self.meanPixel, 2, 1, 1):expandAs(img))
-             :cdiv(torch.repeatTensor(self.std, 2, 1, 1):expandAs(img))
-    self.images[seq][id+1] = img
-  end
+function M:loadInput(path, augmentations)
+  local base = paths.dirname(paths.dirname(path))
+  local seq = base:sub(-2)
+  local id = tonumber(path:sub(-10, -5))
+
+  self:loadImage(base, seq, id)
+  self:loadImage(base, seq, id+1)
 
   local input = torch.cat({self.images[seq][id], self.images[seq][id+1]}, 1)
   return input:cuda(), {}
 end
 
-local function getQuaternion(pose)
-  local r = pose:view(4, 4)
-  local q = torch.Tensor(4) -- {w, x, y, z}
+local function getQuaternion(r)
+  local q = r.new(4) -- {w, x, y, z}
   local trace = r[1][1] + r[2][2] + r[3][3]
   if trace > 0 then
     S = math.sqrt(trace + 1) * 2 -- S=4*q[1]
@@ -124,34 +116,7 @@ local function getQuaternion(pose)
   return q
 end
 
-function M:getLabels(pathNames, outputs)
-  local r = outputs[1].new(#pathNames, 4)
-  local t = outputs[1].new(#pathNames, 3)
-  for i=1,#pathNames do
-    local path = pathNames[i]
-    local seq = paths.dirname(paths.dirname(path)):sub(-2)
-    local id = tonumber(path:sub(-10, -5))
-    local cur = self.gt[seq][id+1]
-    local prev = self.gt[seq][id]
-    local diff = torch.mm(cur, torch.inverse(prev))
-    r[i] = getQuaternion(diff)
-    t[i] = diff[{{1,3}, 4}]
-  end
-  return {r, t}
-end
-
-function M:resetStats()
-  self.count = 0
-  self.rloss = 0
-  self.tloss = 0
-  if self.saveOutput ~= '' then
-    os.execute('rm -rf ' .. self.saveOutput)
-    os.execute('mkdir -p ' .. self.saveOutput)
-  end
-end
-
-local function getPose(q, t)
-  q = q / q:norm()
+function M:getPose(q, t)
   local qx = q[2] + q[2]
   local qy = q[3] + q[3]
   local qz = q[4] + q[4]
@@ -171,10 +136,54 @@ local function getPose(q, t)
     {0, 0, 0, 1}}
 end
 
+local function quaternionMul(a, b)
+  local r = a.new(4)
+  r[1] = b[1]*a[1]-b[2]*a[2]-b[3]*a[3]-b[4]*a[4]
+  r[2] = b[1]*a[2]+b[2]*a[1]-b[3]*a[4]+b[4]*a[3]
+  r[3] = b[1]*a[3]+b[2]*a[4]+b[3]*a[1]-b[4]*a[2]
+  r[4] = b[1]*a[4]-b[2]*a[3]+b[3]*a[2]+b[4]*a[1]
+  return r
+end
+
+local function quaternionDiff(b, a)
+  local ainv = a.new(4)
+  ainv[1] = a[1]
+  ainv[2] = -a[2]
+  ainv[3] = -a[3]
+  ainv[4] = -a[4]
+  return quaternionMul(b, ainv)
+end
+
+function M:getTransform(seq, id)
+  local a = self.gt[seq][id]
+  local b = self.gt[seq][id+1]
+  local diff = torch.mm(torch.inverse(a), b)
+  return getQuaternion(diff), diff[{{1,3}, 4}]
+  --return quaternionDiff(getQuaternion(b), getQuaternion(a)),
+  --       b[{{}, 4}] - a[{{}, 4}]
+end
+
+function M:getLabel(path)
+  local seq = paths.dirname(paths.dirname(path)):sub(-2)
+  local id = tonumber(path:sub(-10, -5))
+  local r, t = self:getTransform(seq, id)
+  return {r, t}
+end
+
+function M:resetStats()
+  self.count = 0
+  self.rloss = 0
+  self.tloss = 0
+  if self.saveOutput ~= '' then
+    os.execute('rm -rf ' .. self.saveOutput)
+    os.execute('mkdir -p ' .. self.saveOutput)
+  end
+end
+
 function M:updateStats(pathNames, outputs, labels)
   self.count = self.count + #pathNames
-  self.rloss = self.rloss + self.criterion.criterions[1].output * self.criterion.weights[1]
-  self.tloss = self.tloss + self.criterion.criterions[2].output * self.criterion.weights[2]
+  self.rloss = self.rloss + self.criterion.criterions[1].output
+  self.tloss = self.tloss + self.criterion.criterions[2].output
   if self.rloss ~= self.rloss or self.tloss ~= self.tloss then
     print("ERROR: NaN in loss!")
   end
@@ -185,10 +194,12 @@ function M:updateStats(pathNames, outputs, labels)
       local seq = paths.dirname(paths.dirname(path)):sub(-2)
       local id = tonumber(path:sub(-10, -5))
       if self.results[seq] == nil then
-        self.results[seq] = outputs[1].new(self.gt[seq]:size(1), 4, 4)
-        self.results[seq][1] = outputs[1].new{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}}
+        self.results[seq] = {}
+        --self.results[seq][1] = {outputs[1].new{1, 0, 0, 0}, outputs[2].new{0, 0, 0}}
+        self.results[seq][1] = outputs[1].new{{1,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1}}
       end
-      self.results[seq][id+1] = getPose(outputs[1][i], outputs[2][i])
+      --self.results[seq][id+1] = {outputs[1][i] / outputs[1][i]:norm(), outputs[2][i]}
+      self.results[seq][id+1] = self:getPose(outputs[1][i], outputs[2][i])
     end
   end
 end
@@ -197,17 +208,17 @@ function M:getStats()
   if self.saveOutput ~= '' then
     for k,v in pairs(self.results) do
       local f = io.open(self.saveOutput .. k .. '.txt', 'w')
-      for i=1,v:size(1) do
+      for i=1,#v do
         if i > 1 then
-          v[i] = torch.mm(v[i], v[i-1])
+          --v[i][1] = quaternionMul(v[i-1][1], v[i][1])
+          --v[i][2] = v[i-1][2] + v[i][2]
+          v[i] = torch.mm(v[i-1], v[i])
         end
-        f:write(v[i][1][1])
-        for j=1,3 do
-          for k=1,4 do
-            if j ~= 1 or k ~= 1 then
-              f:write(' ' .. v[i][j][k])
-            end
-          end
+        --local pose = self:getPose(v[i][1], v[i][2])
+        local pose = torch.view(v[i], -1)
+        f:write(pose[1])
+        for j=2,12 do
+          f:write(' ' .. pose[j])
         end
         f:write('\n')
       end

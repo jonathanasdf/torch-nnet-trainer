@@ -144,7 +144,7 @@ function M:prepareBoxes()
   end
 end
 
-function M:preprocess(path, augmentations)
+function M:loadInput(path, augmentations)
   local augs = {}
   if augmentations ~= nil then
     for i=1,#augmentations do
@@ -173,19 +173,18 @@ function M:preprocess(path, augmentations)
   else
     img = img:csub(self.meanPixel:expandAs(img)):cdiv(self.std:expandAs(img))
   end
+
   return img:cuda(), augs
 end
 
-function M:getLabels(pathNames, outputs)
-  local labels = torch.Tensor(#pathNames)
-  for i=1,#pathNames do
-    if pathNames[i]:find('cyclist') then
-      labels[i] = 3
-    else
-      labels[i] = pathNames[i]:find('neg') and 1 or 2
-    end
+function M:getLabel(path)
+  local label = torch.Tensor(1)
+  if path:find('cyclist') then
+    label[1] = 3
+  else
+    label[1] = path:find('neg') and 1 or 2
   end
-  return labels:cuda()
+  return label:cuda()
 end
 
 function M:resetStats()

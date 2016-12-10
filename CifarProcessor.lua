@@ -25,7 +25,7 @@ function M:__init(model, processorOpts)
   end
 end
 
-function M:preprocess(path, augmentations)
+function M:loadInput(path, augmentations)
   local augs = {}
   if augmentations ~= nil then
     for i=1,#augmentations do
@@ -56,12 +56,8 @@ function M:preprocess(path, augmentations)
   return img:cuda(), augs
 end
 
-function M:getLabels(pathNames, outputs)
-  local labels = torch.CudaTensor(#pathNames)
-  for i=1,#pathNames do
-    labels[i] = self.label[tonumber(pathNames[i])]
-  end
-  return labels
+function M:getLabel(path)
+  return self.label[tonumber(pathNames)]:cuda()
 end
 
 function M:resetStats()

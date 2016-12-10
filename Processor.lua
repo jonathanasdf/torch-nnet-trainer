@@ -45,35 +45,31 @@ local function checkAugmentations(a, b)
 end
 
 -- Takes path as input and what augmentations should be performed, and
--- returns a cuda tensor as input to the model and the augmentations used
-function M:preprocess(path, augmentations)
+-- returns a cuda tensor as input to the model, the label for it, and the augmentations used
+function M:loadInput(path, augmentations)
   return image.load(path, 3):cuda(), {}
+end
+
+function M:getLabel(path)
+  return torch.Tensor(1):cuda()
+end
+
+function M:preprocess(path, augmentations)
+  local input, augs = self:loadInput(path, augmentations)
+  local label = self:getLabel(path)
+  return input, label, augs
 end
 
 function M:loadAndPreprocessInputs(pathNames, augmentations)
   augmentations = augmentations or {}
-  augs = {}
-  local first
-  first, augs[1] = self:preprocess(pathNames[1], augmentations[1])
-  local size = torch.LongStorage(first:dim() + 1)
-  size[1] = #pathNames
-  for i=1,first:dim() do
-    size[i+1] = first:size(i)
-  end
-  local inputs = first.new(size)
-  inputs[1] = first
-  for i=2,#pathNames do
-    inputs[i], augs[i] = self:preprocess(pathNames[i], augmentations[i])
-  end
+  local inputs = {}
+  local labels = {}
+  local augs = {}
   for i=1,#pathNames do
+    inputs[i], labels[i], augs[i] = self:preprocess(pathNames[i], augmentations[i])
     checkAugmentations(augmentations[i], augs[i])
   end
-  return inputs, augs
-end
-
--- return the labels associated with the list of paths as cuda tensors
-function M:getLabels(pathNames, outputs)
-  error('getLabels is not defined.')
+  return batchConcat(inputs), batchConcat(labels), augs
 end
 
 function M:forward(pathNames, inputs, deterministic)
@@ -123,9 +119,8 @@ function M:getStats() end
 
 -- Performs a single forward and backward pass through the model
 function M:train(pathNames)
-  local inputs = self:loadAndPreprocessInputs(pathNames)
+  local inputs, labels = self:loadAndPreprocessInputs(pathNames)
   local outputs = self:forward(pathNames, inputs)
-  local labels = self:getLabels(pathNames, outputs)
   local loss, gradOutputs = self:getLoss(outputs, labels)
   self:backward(inputs, gradOutputs)
 
@@ -135,9 +130,8 @@ end
 
 -- return {aggregatedLoss, #instancesTested}
 function M:test(pathNames)
-  local inputs = self:loadAndPreprocessInputs(pathNames)
+  local inputs, labels = self:loadAndPreprocessInputs(pathNames)
   local outputs = self:forward(pathNames, inputs, true)
-  local labels = self:getLabels(pathNames, outputs)
   local loss, _ = self:getLoss(outputs, labels)
 
   self:updateStats(pathNames, outputs, labels)

@@ -116,6 +116,32 @@ function tableContains(T, entry)
   return false
 end
 
+function batchConcat(inputs)
+  local first = inputs[1]
+  if type(first) == 'table' then
+    local res = {}
+    for j=1,#first do
+      local sub = {}
+      for i=1,#inputs do
+        sub[i] = inputs[i][j]
+      end
+      res[j] = batchConcat(sub)
+    end
+    return res
+  else
+    local size = torch.LongStorage(first:dim() + 1)
+    size[1] = #inputs
+    for i=1,first:dim() do
+      size[i+1] = first:size(i)
+    end
+    local res = first.new(size)
+    for i=1,#inputs do
+      res[i] = inputs[i]
+    end
+    return res
+  end
+end
+
 local RGBBGR = torch.LongTensor{3,2,1}
 function convertRGBBGR(T, dim)
   if not dim then dim = 1 end

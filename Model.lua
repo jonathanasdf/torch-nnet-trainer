@@ -197,11 +197,8 @@ function M:Train(trainFn, valFn)
 
   local validLoader
   if opts.val ~= '' then
-    validLoader = DataLoader{inputs = opts.val, randomize = true}
+    validLoader = DataLoader{inputs = opts.val}
   end
-
-  local pathNames = trainLoader:sample(opts.batchSize)
-  local inputs = self.processor:loadAndPreprocessInputs(pathNames)
 
   local signal = require("posix.signal")
   signal.signal(signal.SIGINT, function(signum)
@@ -220,13 +217,14 @@ function M:Train(trainFn, valFn)
     print('==> training epoch # ' .. epoch)
 
     setPhase('train')
+    trainLoader:shuffle()
     self.loss = 0
     self.count = 0
     self.processor:resetStats()
     self:run(trainLoader,
              opts.batchSize,
              opts.epochSize,
-             true,  -- randomSample
+             opts.epochSize ~= -1,  -- randomSample
              trainFn,
              bind(self.updateModel, self))
     self.loss = self.loss / self.count
@@ -246,7 +244,7 @@ function M:Train(trainFn, valFn)
                valFn,
                bind(self.accValResults, self))
       self.loss = self.loss / self.count
-      self.valLoss[epoch] = self.loss * (1+opts.valLossMultiplier)
+      self.valLoss[epoch] = self.loss * opts.valLossMultiplier
       print(string.format('  Validation loss: %.6f', self.valLoss[epoch]))
       print(self.processor:getStats())
       print()
@@ -281,9 +279,6 @@ function M:Train(trainFn, valFn)
             print('ERROR COPYING FILE TO CACHE?')
           end
         end
-
-        local pathNames = trainLoader:sample(opts.batchSize)
-        local inputs = self.processor:loadAndPreprocessInputs(pathNames)
       end
     end
   end

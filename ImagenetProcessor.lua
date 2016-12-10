@@ -55,7 +55,7 @@ function M:__init(model, processorOpts)
   end
 end
 
-function M:preprocess(path, augmentations)
+function M:loadInput(path, augmentations)
   local img = image.load(path, 3)
 
   local augs = {}
@@ -73,17 +73,13 @@ function M:preprocess(path, augmentations)
   return img:cuda(), augs
 end
 
-function M:getLabels(pathNames, outputs)
-  local labels = torch.Tensor(#pathNames)
-  for i=1,#pathNames do
-    local name = pathNames[i]
-    local filename = paths.basename(name)
-    if name:find('train') then
-      labels[i] = self.lookup[string.sub(filename, 1, 9)]
-    else
-      assert(name:find('val'))
-      labels[i] = self.val[tonumber(string.sub(filename, -12, -5))]
-    end
+function M:getLabel(path)
+  local filename = paths.basename(path)
+  if path:find('train') then
+    labels[i] = self.lookup[string.sub(filename, 1, 9)]
+  else
+    assert(path:find('val'))
+    labels[i] = self.val[tonumber(string.sub(filename, -12, -5))]
   end
   return labels:cuda()
 end

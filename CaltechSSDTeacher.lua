@@ -23,22 +23,20 @@ function M:getStudentLoss(student, studentOutputs, teacherOutputs)
 end
 
 local t = torch.CudaTensor(1)
-function M:preprocess(path, augmentations)
+function M:loadInput(path, augmentations)
   return t, {}
 end
 
-function M:getLabels(pathNames, outputs)
+function M:getLabel(path)
   local n = self.nBoxes
-  local scores = torch.zeros(#pathNames, n):cuda()
-  local offsets = torch.zeros(#pathNames, n, 4):cuda()
-  for i=1,#pathNames do
-    local name = paths.basename(pathNames[i], '.jpg')
-    local box = self.data[name]
-    if box then
-      for j=1,box:size(1) do
-        scores[i][box[j][1]] = box[j][6];
-        offsets[i][box[j][1]] = box[j][{{2,5}}];
-      end
+  local scores = torch.zeros(n):cuda()
+  local offsets = torch.zeros(n, 4):cuda()
+  local name = paths.basename(path, '.jpg')
+  local box = self.data[name]
+  if box then
+    for j=1,box:size(1) do
+      scores[box[j][1]] = box[j][6];
+      offsets[box[j][1]] = box[j][{{2,5}}];
     end
   end
   scores = scores:view(-1)
@@ -46,7 +44,7 @@ function M:getLabels(pathNames, outputs)
 end
 
 function M:forward(pathNames, inputs, deterministic)
-  local labels = self:getLabels(pathName)
+  local _, labels = self:loadAndPreprocessInputs(pathName)
   labels[1] = torch.cat(labels[1], torch.add(torch.mul(labels[1], -1), 1))
   return CaltechSSDProcessor.forward(self, pathNames, labels, deterministic)
 end

@@ -42,7 +42,7 @@ end
 
 function M:prepareBoxes() end
 
-function M:preprocess(path, augmentations)
+function M:loadInput(path, augmentations)
   local img = image.load(path, 3)
   if self.inceptionPreprocessing then
     img = (img * 255 - 128) / 128
@@ -54,24 +54,21 @@ function M:preprocess(path, augmentations)
   return img:cuda(), {}
 end
 
--- outputs = {scores, offsets}
-function M:getLabels(pathNames, outputs)
+function M:getLabel(path)
   local n = self.nBoxes
-  local pos = torch.zeros(#pathNames, n):cuda()
-  local offsets = torch.zeros(#pathNames, n, 4):cuda()
-  for i=1,#pathNames do
-    local name = paths.basename(pathNames[i], '.jpg')
-    local box = self.gt[name]
-    if box then
-      for j=1,box:size(1) do
-        pos[i][box[j][1]] = 1;
-        offsets[i][box[j][1]] = box[j][{{2,5}}];
-      end
+  local pos = torch.zeros(n):cuda()
+  local offsets = torch.zeros(n, 4):cuda()
+  local name = paths.basename(path, '.jpg')
+  local box = self.gt[name]
+  if box then
+    for j=1,box:size(1) do
+      pos[box[j][1]] = 1
+      offsets[box[j][1]] = box[j][{{2,5}}]
     end
   end
   -- pos is 0/1 but torch needs 1/2 for classes
   pos = pos + 1
-  return {pos:view(-1), offsets}
+  return {pos:view(-1), offset}
 end
 
 function M:resetStats()
